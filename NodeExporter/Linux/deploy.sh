@@ -41,8 +41,8 @@ mv node_exporter*${ARCH} node_exporter # Move the extracted directory to a gener
 
 # Create NodeExporter user and group
 useradd --no-create-home --shell /bin/false node_exporter
-groupadd node_exporter
-usermod -a -G node_exporter node_exporter
+groupadd node_exporter || true
+usermod -a -G node_exporter node_exporter || true
 
 # Copy NodeExporter binaries to /usr/local/bin and assign permissions
 cp node_exporter/node_exporter /usr/local/bin/
