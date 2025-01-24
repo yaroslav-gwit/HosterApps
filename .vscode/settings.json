@@ -10,10 +10,12 @@
     "MAINPID",
     "maxsources",
     "maxupdateskew",
+    "promtool",
     "rtcfile",
     "rtcsync",
     "tsdb",
     "userdel",
+    "usermod",
     "xvzf"
   ]
 }
