@@ -39,16 +39,17 @@ wget https://github.com/prometheus/prometheus/releases/download/v${LATEST_VERSIO
 tar -xvzf prometheus*.tar.gz
 mv prometheus*${ARCH} prometheus # Move the extracted directory to a generic name
 
-# Create Prometheus user and required service directories
+# Create Prometheus user
 if id "prometheus" &>/dev/null; then
     echo "User prometheus already exists"
 else
     useradd --no-create-home --shell /bin/false prometheus
 fi
 
-mkdir /etc/prometheus
-mkdir /var/lib/prometheus
-mkdir /var/log/prometheus
+# Create the required service directories
+mkdir -p /etc/prometheus # -p flag creates parent directories if they do not exist, for error prevention
+mkdir -p /var/lib/prometheus
+mkdir -p /var/log/prometheus
 chown -R prometheus:prometheus /etc/prometheus
 chown -R prometheus:prometheus /var/lib/prometheus
 chown -R prometheus:prometheus /var/log/prometheus
