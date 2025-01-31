@@ -55,10 +55,11 @@ chown prometheus:prometheus /usr/local/bin/prometheus
 chown prometheus:prometheus /usr/local/bin/promtool
 
 # Copy consoles and console_libraries to /etc/prometheus
-cp -r prometheus/consoles /etc/prometheus
-cp -r prometheus/console_libraries /etc/prometheus
-chown -R prometheus:prometheus /etc/prometheus/consoles
-chown -R prometheus:prometheus /etc/prometheus/console_libraries
+# DEPRECATED: Prometheus 2.0+ no longer requires these directories
+# cp -r prometheus/consoles /etc/prometheus
+# cp -r prometheus/console_libraries /etc/prometheus
+# chown -R prometheus:prometheus /etc/prometheus/consoles
+# chown -R prometheus:prometheus /etc/prometheus/console_libraries
 
 # Create Prometheus config file and assign permissions
 cat <<'EOF' >/etc/prometheus/prometheus.yml

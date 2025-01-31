@@ -1,4 +1,4 @@
-# Prometheus Installation Script
+# NodeExporter Installation Script
 
 A set of shell scripts which will automatically install, update or remove NodeExporter on your Linux distro of choice.
 
