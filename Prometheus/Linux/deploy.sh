@@ -40,7 +40,12 @@ tar -xvzf prometheus*.tar.gz
 mv prometheus*${ARCH} prometheus # Move the extracted directory to a generic name
 
 # Create Prometheus user and required service directories
-useradd --no-create-home --shell /bin/false prometheus || true
+if id "prometheus" &>/dev/null; then
+    echo "User prometheus already exists"
+else
+    useradd --no-create-home --shell /bin/false prometheus
+fi
+
 mkdir /etc/prometheus
 mkdir /var/lib/prometheus
 mkdir /var/log/prometheus
