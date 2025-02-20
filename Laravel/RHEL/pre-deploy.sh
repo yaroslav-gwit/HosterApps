@@ -61,3 +61,8 @@ dnf install -y nodejs
 
 # Install MariaDB
 dnf install -y mariadb-server mariadb-common
+
+# Start and enable the core services
+systemctl enable httpd --now
+systemctl enable php-fpm --now
+systemctl enable mariadb --now
