@@ -1,5 +1,6 @@
 {
   "cSpell.words": [
+    "bcmath",
     "Chrony",
     "distro",
     "driftfile",
@@ -10,7 +11,13 @@
     "MAINPID",
     "maxsources",
     "maxupdateskew",
+    "mbstring",
+    "mysqlnd",
+    "opcache",
+    "pecl",
     "promtool",
+    "remi",
+    "Remi's",
     "rtcfile",
     "rtcsync",
     "tsdb",
