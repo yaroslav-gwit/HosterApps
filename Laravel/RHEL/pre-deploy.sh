@@ -13,10 +13,10 @@ dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarc
 dnf install -y https://rpms.remirepo.net/enterprise/remi-release-9.rpm
 
 # Set the default PHP version to 8.3
-dnf module reset php
+dnf module reset php -y
 dnf module install php:remi-8.3 -y
 dnf module enable php:remi-8.3 -y
-dnf config-manager --set-enabled remi-php83
+# dnf config-manager --set-enabled remi-php83  # this doesn't work on RHEL 9
 
 # Install HTTPd (Apache with the support for PHP-FPM)
 dnf install -y httpd
@@ -58,3 +58,6 @@ dnf install -y curl
 ## Latest NodeJS LTS version at the time of writing is 22.x
 curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
 dnf install -y nodejs
+
+# Install MariaDB
+dnf install -y mariadb-server mariadb-common
