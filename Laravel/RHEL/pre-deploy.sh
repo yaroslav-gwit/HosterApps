@@ -54,7 +54,7 @@ rm -f composer-setup.php
 # EOF Install composer
 
 # Install Node.js and npm
-dnf install -y curl
+dnf install -y curl git rsync
 ## Latest NodeJS LTS version at the time of writing is 22.x
 curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
 dnf install -y nodejs
@@ -63,6 +63,10 @@ dnf install -y nodejs
 dnf install -y mariadb-server mariadb-common
 
 # Start and enable the core services
-systemctl enable httpd --now
-systemctl enable php-fpm --now
-systemctl enable mariadb --now
+systemctl enable httpd
+systemctl enable php-fpm
+systemctl enable mariadb
+
+systemctl start httpd
+systemctl start php-fpm
+systemctl start mariadb
