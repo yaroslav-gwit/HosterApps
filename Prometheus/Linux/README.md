@@ -43,7 +43,7 @@ Tested on Debian 12, AlmaLinux 9 and AlmaLinux 8.
 To start this deployment script you'll need to execute the below:
 
 ```shell
-curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterJails/main/Prometheus/Linux/deploy.sh | bash
+curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/Prometheus/Linux/deploy.sh | bash
 ```
 
 ## Destroy.sh
@@ -53,7 +53,7 @@ curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterJails/main/Prome
 To start this rollback script you'll need to execute the below:
 
 ```shell
-curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterJails/main/Prometheus/Linux/destroy.sh | bash
+curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/Prometheus/Linux/destroy.sh | bash
 ```
 
 ## Additional information

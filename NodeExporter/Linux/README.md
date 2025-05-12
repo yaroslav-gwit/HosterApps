@@ -43,5 +43,5 @@ Tested on Debian 12, AlmaLinux 9 and AlmaLinux 8.
 To start this deployment script you'll need to execute the below:
 
 ```shell
-curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterJails/main/NodeExporter/Linux/deploy.sh | bash
+curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/NodeExporter/Linux/deploy.sh | bash
 ```

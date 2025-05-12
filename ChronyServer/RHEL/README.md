@@ -8,7 +8,7 @@ To deploy Chrony as NTP server on your RHEL machine (works on RHEL8 and RHEL9), 
 
 ```shell
 sudo su -
-curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterJails/main/ChronyServer/RHEL/deploy.sh | bash
+curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/ChronyServer/RHEL/deploy.sh | bash
 ```
 
 ## Default Configuration Rollback

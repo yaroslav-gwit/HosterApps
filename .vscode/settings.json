@@ -22,6 +22,8 @@
     "Remi's",
     "rtcfile",
     "rtcsync",
+    "smartctl",
+    "smartmontools",
     "tsdb",
     "userdel",
     "usermod",

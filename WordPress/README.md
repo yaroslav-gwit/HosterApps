@@ -37,7 +37,7 @@ Logout and log back in for the changes to apply.
 Run this one-liner below to start the installation process:
 
 ```shell
-curl -sS "https://raw.githubusercontent.com/yaroslav-gwit/HosterJails/main/WordPress/wp-freebsd-release.sh" | bash -
+curl -sS "https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/WordPress/wp-freebsd-release.sh" | bash -
 ```
 
 At the end of the installation process, you'll receive a similar notes to the below (which may include an information about your new service, admin credentials, etc):
