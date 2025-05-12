@@ -26,7 +26,7 @@ if ! [ -x "$(command -v smartctl)" ]; then
 fi
 
 # check if smartctl_exporter is already installed
-if ! [ -x "$(command -v smartctl_exporter)" ]; then
+if [ -x "$(command -v smartctl_exporter)" ]; then
     echo "error: smartctl_exporter is already installed. please use the update or uninstall script instead."
     exit 3
 fi
