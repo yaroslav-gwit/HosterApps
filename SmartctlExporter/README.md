@@ -55,3 +55,23 @@ To start the deployment script you'll need to execute the one-liner below:
 ```shell
 curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/SmartctlExporter/Linux/deploy.sh | bash
 ```
+
+## Prometheus Target
+
+Now you must be wondering how to add this new exporter as a target to Prometheus?
+Well, simply append the below to your Prometheus YAML configuration:
+
+```yaml
+- job_name: "smartctl"
+  scrape_interval: 120s
+  static_configs:
+    - targets: ["localhost:9633"]
+```
+
+> If your Prometheus server is running on a separate machine, replace `localhost` with the remote server's IP/hostname.
+
+Don't forget to reload Prometheus to apply the changes:
+
+```shell
+systemctl reload prometheus
+```

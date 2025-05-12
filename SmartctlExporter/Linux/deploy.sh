@@ -88,14 +88,25 @@ rm -rf smartctl_exporter*.tar.gz
 rm -rf smartctl_exporter
 
 # Check the status of the Prometheus service before exiting
+set +e # Ignore errors for the status check
 echo
 echo
 echo "SmartctlExporter service status:"
 systemctl is-active smartctl_exporter
 # shellcheck disable=SC2181
 if [ $? -eq 0 ]; then
-    echo "SmartctlExporter is running"
+    echo
+    echo
+    echo "SmartctlExporter is now up-and-running."
 else
+    echo
+    echo
     echo "SmartctlExporter is not running!"
 fi
+echo
+echo "You can check the service status with:"
+echo "systemctl status smartctl_exporter"
+echo
+echo "You can also check the logs with:"
+echo "journalctl -u smartctl_exporter -f"
 echo
