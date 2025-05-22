@@ -1,0 +1,17 @@
+[Unit]
+Description=Scaphandre Prometheus Exporter Service
+After=network.target
+# This number must be greater than StartLimitBurst * RestartSec
+StartLimitInterval=50
+StartLimitBurst=5
+
+[Service]
+User=root
+Group=root
+Type=simple
+ExecStart=/usr/bin/scaphandre prometheus --qemu --containers --port 81920 --address 127.0.0.1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -37,9 +37,9 @@ sudo dnf install -y jq wget curl bash smartmontools
 
 ### Use `root` user account
 
-Another requirement is to execute all scripts from under the `root` user, aka `sudo su -`.
+Another requirement is to execute all scripts from under the `root` user, e.g. `sudo su -`.
 
-## Deploy.sh
+## Deployment
 
 ### Linux
 

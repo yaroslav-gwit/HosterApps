@@ -64,6 +64,9 @@ cat <<'EOF' >/etc/systemd/system/smartctl_exporter.service
 [Unit]
 Description=Prometheus smartctl_exporter service
 After=network.target
+# This number must be greater than StartLimitBurst * RestartSec
+StartLimitInterval=50
+StartLimitBurst=5
 
 [Service]
 User=root
@@ -72,7 +75,6 @@ Type=simple
 ExecStart=/usr/local/bin/smartctl_exporter
 Restart=on-failure
 RestartSec=5
-MaxRetries=3
 
 [Install]
 WantedBy=multi-user.target
@@ -87,7 +89,7 @@ systemctl enable smartctl_exporter --now
 rm -rf smartctl_exporter*.tar.gz
 rm -rf smartctl_exporter
 
-# Check the status of the Prometheus service before exiting
+# Check the status of the smartctl_exporter service before exiting
 set +e # Ignore errors for the status check
 echo
 echo
