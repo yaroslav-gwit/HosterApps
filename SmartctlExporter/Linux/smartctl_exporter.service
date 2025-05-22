@@ -1,0 +1,17 @@
+[Unit]
+Description=Prometheus smartctl_exporter service
+After=network.target
+# This number must be greater than StartLimitBurst * RestartSec
+StartLimitInterval=50
+StartLimitBurst=5
+
+[Service]
+User=root
+Group=root
+Type=simple
+ExecStart=/usr/local/bin/smartctl_exporter
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

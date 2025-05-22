@@ -60,26 +60,9 @@ chown root:root /usr/local/bin/smartctl_exporter
 chmod 0755 /usr/local/bin/smartctl_exporter
 
 # Create smartctl_exporter systemd service file
-cat <<'EOF' >/etc/systemd/system/smartctl_exporter.service
-[Unit]
-Description=Prometheus smartctl_exporter service
-After=network.target
-# This number must be greater than StartLimitBurst * RestartSec
-StartLimitInterval=50
-StartLimitBurst=5
-
-[Service]
-User=root
-Group=root
-Type=simple
-ExecStart=/usr/local/bin/smartctl_exporter
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-
-EOF
+wget https://github.com/yaroslav-gwit/HosterApps/raw/refs/heads/main/SmartctlExporter/Linux/smartctl_exporter.service -O /etc/systemd/system/smartctl_exporter.service
+chmod 0644 /etc/systemd/system/smartctl_exporter.service
+chown root:root /etc/systemd/system/smartctl_exporter.service
 
 # Start smartctl_exporter service
 systemctl daemon-reload
