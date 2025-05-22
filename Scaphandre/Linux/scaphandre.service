@@ -9,7 +9,7 @@ StartLimitBurst=5
 User=root
 Group=root
 Type=simple
-ExecStart=/usr/bin/scaphandre prometheus --qemu --containers --port 81920 --address 127.0.0.1
+ExecStart=/usr/bin/scaphandre prometheus --qemu --containers --port 1920 --address 127.0.0.1
 Restart=on-failure
 RestartSec=5
 

@@ -93,6 +93,8 @@ rm -rf smartctl_exporter
 set +e # Ignore errors for the status check
 echo
 echo
+
+sleep 5 # Wait for a few seconds to allow the service to start
 echo "SmartctlExporter service status:"
 systemctl is-active smartctl_exporter
 # shellcheck disable=SC2181

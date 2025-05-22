@@ -38,6 +38,8 @@ systemctl enable scaphandre --now
 set +e # Ignore errors for the status check
 echo
 echo
+
+sleep 5 # Wait for a few seconds to allow the service to start
 echo "Scaphandre service status:"
 systemctl is-active scaphandre
 # shellcheck disable=SC2181

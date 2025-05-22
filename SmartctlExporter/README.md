@@ -63,7 +63,7 @@ Well, simply append the below to your Prometheus YAML configuration:
 
 ```yaml
 - job_name: "smartctl"
-  scrape_interval: 120s
+  scrape_interval: 240s
   static_configs:
     - targets: ["localhost:9633"]
 ```

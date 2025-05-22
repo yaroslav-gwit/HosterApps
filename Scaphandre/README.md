@@ -60,7 +60,8 @@ Well, simply append the below to your Prometheus YAML configuration:
 
 ```yaml
 - job_name: "scaphandre"
+  fallback_scrape_protocol: PrometheusText0.0.4
   scrape_interval: 30s
   static_configs:
-    - targets: ["localhost:81920"]
+    - targets: ["localhost:1920"]
 ```
