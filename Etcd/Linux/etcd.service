@@ -14,8 +14,20 @@ WorkingDirectory=/opt/etcd
 # EnvironmentFile=-/opt/etcd/.env
 EnvironmentFile=/opt/etcd/.env
 
+# ExecStart=/opt/etcd/etcd \
+#             --config=/opt/etc/config.yaml
+
 ExecStart=/opt/etcd/etcd \
-            --config=config.yaml
+            --auto-tls \
+            --peer-auto-tls \
+            --name ${HOSTNAME} \
+            --listen-client-urls https://0.0.0.0:2379 \
+            --advertise-client-urls https://${HOSTNAME}:2379 \
+            --listen-peer-urls https://0.0.0.0:2380 \
+            --initial-cluster-token ${CLUSTER_TOKEN} \
+            --initial-cluster ${CLUSTER_NODES} \
+            --initial-cluster-state new \
+            --auth-token ${CLUSTER_TOKEN}
 
 Restart=on-failure
 RestartSec=5

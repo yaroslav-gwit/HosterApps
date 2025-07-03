@@ -68,9 +68,9 @@ chown root:root /etc/systemd/system/etcd.service
 chmod 0644 /etc/systemd/system/etcd.service
 
 # Create the Etcd configuration file
-wget https://github.com/yaroslav-gwit/HosterApps/raw/refs/heads/main/Etcd/Linux/config.yaml -O /opt/etcd/config.yaml
-chown etcd:etcd /opt/etcd/config.yaml
-chmod 0640 /opt/etcd/config.yaml
+# wget https://github.com/yaroslav-gwit/HosterApps/raw/refs/heads/main/Etcd/Linux/config.yaml -O /opt/etcd/config.yaml
+# chown etcd:etcd /opt/etcd/config.yaml
+# chmod 0640 /opt/etcd/config.yaml
 
 # Enable Etcd service
 systemctl daemon-reload
