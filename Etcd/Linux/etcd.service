@@ -18,6 +18,7 @@ EnvironmentFile=/opt/etcd/.env
 #             --config=/opt/etc/config.yaml
 
 ExecStart=/opt/etcd/etcd \
+            --data-dir /opt/etcd/data \
             --auto-tls \
             --peer-auto-tls \
             --name ${HOSTNAME} \
