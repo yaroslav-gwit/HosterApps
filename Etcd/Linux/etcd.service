@@ -14,9 +14,6 @@ WorkingDirectory=/opt/etcd
 # EnvironmentFile=-/opt/etcd/.env
 EnvironmentFile=/opt/etcd/.env
 
-# ExecStart=/opt/etcd/etcd \
-#             --config=/opt/etc/config.yaml
-
 ExecStart=/opt/etcd/etcd \
             --data-dir /opt/etcd/data \
             --auto-tls \
@@ -27,8 +24,11 @@ ExecStart=/opt/etcd/etcd \
             --listen-peer-urls https://0.0.0.0:2380 \
             --initial-cluster-token ${CLUSTER_TOKEN} \
             --initial-cluster ${CLUSTER_NODES} \
-            --initial-cluster-state new \
-            --auth-token ${CLUSTER_TOKEN}
+            --initial-advertise-peer-urls https://${MAIN_IP}:2380 \
+            --initial-cluster-state new
+
+# TBD: Need to work out how to pass the auth token
+# --auth-token ${CLUSTER_TOKEN}
 
 Restart=on-failure
 RestartSec=5
