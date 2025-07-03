@@ -4,6 +4,8 @@
     "Chrony",
     "distro",
     "driftfile",
+    "etcdctl",
+    "etcdutl",
     "fcgi",
     "iburst",
     "journalctl",

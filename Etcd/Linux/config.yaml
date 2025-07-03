@@ -1,0 +1,60 @@
+# Example etcd-config.yml
+# Node name, a unique identifier, in the etcd cluster
+name: ${HOSTNAME}
+
+# Data directory where etcd will store its data
+data-dir: /opt/etcd/data
+
+# Listen addresses for client communication
+# listen-client-urls: http://127.0.0.1:2379,http://<NODE-IP>:2379
+listen-client-urls: http://0.0.0.0:2379
+
+# Advertise addresses for client communication
+# advertise-client-urls: http://<NODE-IP>:2379
+advertise-client-urls: http://0.0.0.0:2379
+
+# Listen addresses for peer communication
+# listen-peer-urls: http://<NODE-IP>:2380
+listen-peer-urls: http://0.0.0.0:2380
+
+# Advertise addresses for peer communication
+# initial-advertise-peer-urls: http://<NODE-IP>:2380
+initial-advertise-peer-urls: http://0.0.0.0:2380
+
+# Initial cluster configuration
+# initial-cluster: node-1=http://<NODE-IP>:2380,node-2=http://<NODE-IP>:2380
+initial-cluster: ${CLUSTER_NODES}
+
+# Unique token for the etcd cluster
+# initial-cluster-token: etcd-cluster-1
+initial-cluster-token: ${CLUSTER_TOKEN}
+
+# Initial cluster state (new, existing, or standby)
+initial-cluster-state: new
+
+# Enable authentication with a shared secret token
+auth-token: "${CLUSTER_TOKEN}"
+
+# Enable authorization with RBAC
+enable-authorization: true
+
+# Enable automatic compaction of the etcd key-value store
+auto-compaction-mode: periodic
+auto-compaction-retention: "1h"
+
+# Secure communication settings (TLS)
+# client-transport-security:
+#   cert-file: /etc/etcd/server.crt
+#   key-file: /etc/etcd/server.key
+#   client-cert-auth: true
+#   trusted-ca-file: /etc/etcd/ca.crt
+
+# peer-transport-security:
+#   cert-file: /etc/etcd/peer.crt
+#   key-file: /etc/etcd/peer.key
+#   client-cert-auth: true
+#   trusted-ca-file: /etc/etcd/ca.crt
+
+# Enable auto-tls
+auto-tls: true
+peer-auto-tls: true

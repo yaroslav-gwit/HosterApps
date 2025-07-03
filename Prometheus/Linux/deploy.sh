@@ -78,45 +78,12 @@ scrape_configs:
       - targets: ['localhost:9090']
 EOF
 chown prometheus:prometheus /etc/prometheus/prometheus.yml
+chmod 0644 /etc/prometheus/prometheus.yml
 
 # Create Prometheus systemd service file
-cat <<'EOF' >/etc/systemd/system/prometheus.service
-[Unit]
-Description=Prometheus monitoring system and time series database
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-User=prometheus
-Group=prometheus
-Type=simple
-
-# ExecStartPre=/usr/bin/mkdir -p /var/log/prometheus
-# ExecStartPre=/usr/bin/touch /var/log/prometheus/prometheus.log
-# ExecStartPre=/usr/bin/chown -R prometheus:prometheus /var/log/prometheus
-
-ExecStart=/usr/local/bin/prometheus \
-    --config.file=/etc/prometheus/prometheus.yml \
-    --storage.tsdb.path=/var/lib/prometheus \
-    --web.console.templates=/etc/prometheus/consoles \
-    --web.console.libraries=/etc/prometheus/console_libraries \
-    --log.level=info \
-    --log.format=json \
-    --storage.tsdb.retention.time=365d \
-    --web.enable-remote-write-receiver
-
-ExecReload=/usr/bin/kill -HUP $MAINPID
-
-# StandardOutput=append:/var/log/prometheus/prometheus.log
-# StandardError=append:/var/log/prometheus/prometheus.log
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=prometheus
-
-[Install]
-WantedBy=multi-user.target
-
-EOF
+wget https://github.com/yaroslav-gwit/HosterApps/raw/refs/heads/main/Prometheus/Linux/prometheus.service -O /etc/systemd/system/prometheus.service
+chown root:root /etc/systemd/system/prometheus.service
+chmod 0644 /etc/systemd/system/prometheus.service
 
 # Start Prometheus service
 systemctl daemon-reload

@@ -66,6 +66,10 @@ Well, simply append the below to your Prometheus YAML configuration:
   scrape_interval: 240s
   static_configs:
     - targets: ["localhost:9633"]
+  relabel_configs:
+    - source_labels: [__address__]
+      target_label: instance
+      replacement: "your_instance_name_here"
 ```
 
 > If your Prometheus server is running on a separate machine, replace `localhost` with the remote server's IP/hostname.

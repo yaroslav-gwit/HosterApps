@@ -1,0 +1,24 @@
+[Unit]
+Description=Etcd distributed database service for Hoster cluster
+After=network.target
+# This number must be greater than StartLimitBurst * RestartSec
+StartLimitInterval=50
+StartLimitBurst=5
+
+[Service]
+User=etcd
+Group=etcd
+Type=simple
+WorkingDirectory=/opt/etcd
+# Comment the line with "-" to make the service fail if the environment file is not found.
+# EnvironmentFile=-/opt/etcd/.env
+EnvironmentFile=/opt/etcd/.env
+
+ExecStart=/opt/etcd/etcd \
+            --config=config.yaml
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
