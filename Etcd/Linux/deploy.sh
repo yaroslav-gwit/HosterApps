@@ -36,7 +36,8 @@ LATEST_VERSION=$(wget -qO- https://api.github.com/repos/etcd-io/etcd/releases/la
 # shellcheck disable=SC2086
 wget https://github.com/etcd-io/etcd/releases/download/${LATEST_VERSION}/etcd-${LATEST_VERSION}-linux-${ARCH}.tar.gz
 tar -xvzf etcd*.tar.gz
-mv etcd* etcd # Move the extracted directory to a generic name
+rm -f etcd*.tar.gz # Remove the tarball after extraction
+mv etcd* etcd      # Move the extracted directory to a generic name
 
 # Create Etcd user and group
 if id "etcd" &>/dev/null; then
@@ -60,7 +61,7 @@ chown etcd:etcd /opt/etcd/etcd*
 chmod 0755 /opt/etcd/etcd*
 
 # Clean up downloaded files
-rm -rf etcd*.tar.gz etcd
+rm -rf etcd
 
 # Create the Etcd service file
 wget https://github.com/yaroslav-gwit/HosterApps/raw/refs/heads/main/Etcd/Linux/etcd.service -O /etc/systemd/system/etcd.service
