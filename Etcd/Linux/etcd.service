@@ -19,6 +19,7 @@ ExecStart=/opt/etcd/etcd \
             --auto-tls \
             --peer-auto-tls \
             --name ${HOSTNAME} \
+            --listen-metrics-urls http://127.0.0.1:2381
             --listen-client-urls https://0.0.0.0:2379 \
             --advertise-client-urls https://${HOSTNAME}:2379 \
             --listen-peer-urls https://0.0.0.0:2380 \
@@ -26,9 +27,6 @@ ExecStart=/opt/etcd/etcd \
             --initial-cluster ${CLUSTER_NODES} \
             --initial-advertise-peer-urls https://${MAIN_IP}:2380 \
             --initial-cluster-state new
-
-# TBD: Need to work out how to pass the auth token
-# --auth-token ${CLUSTER_TOKEN}
 
 Restart=on-failure
 RestartSec=5
