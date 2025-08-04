@@ -1,0 +1,19 @@
+[Unit]
+Description=Nebula overlay networking service
+After=network.target
+StartLimitInterval=30
+StartLimitBurst=3
+
+[Service]
+User=nebula
+Group=nebula
+Type=simple
+WorkingDirectory=/opt/nebula
+# Only start if configuration file exists
+ConditionFileNotEmpty=/opt/nebula/config.yml
+ExecStart=/opt/nebula/nebula -config /opt/nebula/config.yml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

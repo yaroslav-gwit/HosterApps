@@ -1,0 +1,91 @@
+# Example Nebula Configuration File
+# This is a minimal configuration template. Copy to /opt/nebula/config.yml and customize.
+# For full configuration options, see: https://github.com/slackhq/nebula/blob/master/examples/config.yml
+
+# PKI defines the location of credentials for this node
+pki:
+  # The CA certificate that signed all host certificates
+  ca: /opt/nebula/ca.crt
+  # This host's certificate (signed by the CA)
+  cert: /opt/nebula/host.crt
+  # This host's private key
+  key: /opt/nebula/host.key
+
+# Static host map defines lighthouses with fixed IP addresses
+# Format: "{nebula ip}": ["{routable ip/dns name}:{routable port}"]
+static_host_map:
+  "192.168.100.1": ["your-lighthouse-public-ip:4242"]
+
+lighthouse:
+  # Set to true ONLY on lighthouse nodes
+  am_lighthouse: false
+  # How often to update lighthouse with our info (seconds)
+  interval: 60
+  # List of lighthouse nebula IPs to connect to
+  # IMPORTANT: Use lighthouse NEBULA IPs, not public IPs
+  hosts:
+    - "192.168.100.1"
+
+# Network listening configuration
+listen:
+  # Listen on all interfaces (IPv4 and IPv6)
+  host: "::"
+  # Port to listen on (4242 is default)
+  port: 4242
+
+# NAT hole punching configuration
+punchy:
+  # Enable hole punching
+  punch: true
+
+# Network interface configuration
+tun:
+  # Disable tun interface (set to false for normal operation)
+  disabled: false
+  # Interface name (optional)
+  dev: nebula1
+  # MTU size (1300 is safe for internet traffic)
+  mtu: 1300
+
+# Logging configuration
+logging:
+  # Log level: panic, fatal, error, warning, info, or debug
+  level: info
+  # Log format: text or json
+  format: text
+
+# Firewall rules (default deny)
+firewall:
+  # Actions: drop (silent) or reject (send error response)
+  outbound_action: drop
+  inbound_action: drop
+
+  # Connection tracking timeouts
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+    default_timeout: 10m
+
+  # Outbound rules (what this node can access)
+  outbound:
+    # Allow all outbound traffic
+    - port: any
+      proto: any
+      host: any
+
+  # Inbound rules (what can access this node)
+  inbound:
+    # Allow ICMP (ping) from any nebula host
+    - port: any
+      proto: icmp
+      host: any
+    
+    # Example: Allow SSH (port 22) from any nebula host
+    #- port: 22
+    #  proto: tcp
+    #  host: any
+    
+    # Example: Allow HTTP (port 80) from hosts with "web" group
+    #- port: 80
+    #  proto: tcp
+    #  group: web
