@@ -1,6 +1,8 @@
 [Unit]
 Description=Etcd distributed database service for Hoster cluster
-After=network.target
+Documentation=https://etcd.io/docs/
+After=network-online.target
+Wants=network-online.target
 # This number must be greater than StartLimitBurst * RestartSec
 StartLimitInterval=50
 StartLimitBurst=5
@@ -8,11 +10,30 @@ StartLimitBurst=5
 [Service]
 User=etcd
 Group=etcd
-Type=simple
+Type=notify
 WorkingDirectory=/opt/etcd
 # Comment the line with "-" to make the service fail if the environment file is not found.
 # EnvironmentFile=-/opt/etcd/.env
 EnvironmentFile=/opt/etcd/.env
+
+# Security and hardening options
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/etcd/data
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 ExecStart=/opt/etcd/etcd \
             --data-dir /opt/etcd/data \
@@ -21,7 +42,7 @@ ExecStart=/opt/etcd/etcd \
             --name ${HOSTNAME} \
             --auto-compaction-mode=periodic \
             --auto-compaction-retention=20h \
-            --listen-metrics-urls http://127.0.0.1:2381
+            --listen-metrics-urls http://127.0.0.1:2381 \
             --listen-client-urls https://0.0.0.0:2379 \
             --advertise-client-urls https://${HOSTNAME}:2379 \
             --listen-peer-urls https://0.0.0.0:2380 \
@@ -32,6 +53,13 @@ ExecStart=/opt/etcd/etcd \
 
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+# Process limits
+LimitNOFILE=40000
+LimitNPROC=8192
 
 [Install]
 WantedBy=multi-user.target
