@@ -1,54 +1,123 @@
 #!/usr/bin/env bash
-set -e
+#
+#  etcd‑uninstall.sh
+#
+#  Completely removes the Etcd installation, its systemd unit, data,
+#  and the dedicated system user/group.
+#
+#  Usage:
+#      sudo ./etcd-uninstall.sh            # interactive confirmation
+#      sudo ./etcd-uninstall.sh --force    # skip confirmation (e.g. CI)
+#
+#  Exit codes:
+#      0 – success
+#      1 – not run as root
+#      2 – user aborted
+#      3 – any other error
+#
 
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-    echo "Please run this script as root"
+set -euo pipefail
+trap 'error "An unexpected error occurred at line $LINENO." ; exit 3' ERR
+
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
+error() { printf '[%s] ERROR: %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
+
+# --------------------------------------------------------------------------- #
+# 1. Pre‑flight checks
+# --------------------------------------------------------------------------- #
+if [[ $EUID -ne 0 ]]; then
+    error "This script must be run as root."
     exit 1
 fi
 
-echo "Warning: This will completely remove Etcd and all its data."
-echo "This action cannot be undone."
-read -p "Are you sure you want to continue? (y/N): " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Operation cancelled."
-    exit 0
+# --------------------------------------------------------------------------- #
+# 2. Parse options
+# --------------------------------------------------------------------------- #
+FORCE=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f|--force) FORCE=true ;;
+        -h|--help)
+            cat <<'HELP'
+etcd-uninstall.sh  - Completely removes Etcd from the system.
+
+Options:
+  -f, --force    Skip the confirmation prompt (useful for scripts or CI).
+  -h, --help     Show this help message.
+HELP
+            exit 0
+            ;;
+        *) error "Unknown option: $1"; exit 3 ;;
+    esac
+    shift
+done
+
+# --------------------------------------------------------------------------- #
+# 3. Confirmation (unless forced)
+# --------------------------------------------------------------------------- #
+if ! $FORCE; then
+    log "WARNING: This will permanently delete Etcd binaries, data and the system user."
+    read -rp "Do you really want to continue? (y/N): " -n 1 REPLY
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log "Operation cancelled."
+        exit 2
+    fi
 fi
 
-# Stop and disable the Etcd service
+# --------------------------------------------------------------------------- #
+# 4. Stop and disable the service
+# --------------------------------------------------------------------------- #
 if systemctl is-active --quiet etcd; then
-    echo "Stopping Etcd service..."
+    log "Stopping the etcd service..."
     systemctl stop etcd
 fi
 
 if systemctl is-enabled --quiet etcd; then
-    echo "Disabling Etcd service..."
+    log "Disabling the etcd service..."
     systemctl disable etcd
 fi
 
-# Remove the service file
-if [ -f "/etc/systemd/system/etcd.service" ]; then
-    echo "Removing Etcd service file..."
-    rm -f /etc/systemd/system/etcd.service
-fi
+# --------------------------------------------------------------------------- #
+# 5. Remove the unit file(s)
+# --------------------------------------------------------------------------- #
+for svc in "/etc/systemd/system/etcd.service" "/run/systemd/system/etcd.service"; do
+    if [[ -f $svc ]]; then
+        log "Removing systemd unit $svc ..."
+        rm -f "$svc"
+    fi
+done
 
-# Reload systemd daemon
+# Reload the daemon to pick up the removal
+log "Reloading systemd daemon..."
 systemctl daemon-reload
 
-# Remove Etcd installation directory and all data
-if [ -d "/opt/etcd" ]; then
-    echo "Removing Etcd installation directory and data..."
+# --------------------------------------------------------------------------- #
+# 6. Delete installation directory and data
+# --------------------------------------------------------------------------- #
+if [[ -d /opt/etcd ]]; then
+    log "Removing /opt/etcd and all its contents..."
     rm -rf /opt/etcd
 fi
 
-# Remove the etcd user and group
-if id "etcd" &>/dev/null; then
-    echo "Removing etcd user..."
+# --------------------------------------------------------------------------- #
+# 7. Delete the dedicated user & group
+# --------------------------------------------------------------------------- #
+if id -u etcd >/dev/null 2>&1; then
+    log "Removing the 'etcd' system user ..."
     userdel etcd
 fi
 
-echo
-echo "Etcd has been successfully removed from the system."
-echo "All service files, binaries, and data have been deleted."
-echo
+if getent group etcd >/dev/null 2>&1; then
+    log "Removing the 'etcd' system group ..."
+    groupdel etcd
+fi
+
+# --------------------------------------------------------------------------- #
+# 8. Done
+# --------------------------------------------------------------------------- #
+log "Etcd has been completely removed."
+log "All binaries, configuration, data and system user/group are gone."
