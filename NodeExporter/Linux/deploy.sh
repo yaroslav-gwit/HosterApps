@@ -1,84 +1,95 @@
 #!/usr/bin/env bash
-set -e
+# ==========================================================
+#   Install the latest Node Exporter release on Linux
+# ==========================================================
+set -euo pipefail
 
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-    echo "Please run this script as root"
-    exit 1
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+fail() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "Required command '$1' not found."
+}
+
+# ------------------------------------------------------------------
+# 1. Pre-flight checks
+# ------------------------------------------------------------------
+[[ $EUID -eq 0 ]] || fail "This script must be run as root."
+
+require_cmd wget
+require_cmd jq
+require_cmd systemctl
+
+# ------------------------------------------------------------------
+# 2. Detect architecture
+# ------------------------------------------------------------------
+case "$(uname -m)" in
+  x86_64)        ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  armv7l)        ARCH=armv7 ;;
+  *) fail "Unsupported architecture: $(uname -m)" ;;
+esac
+
+# ------------------------------------------------------------------
+# 3. Determine the latest release
+# ------------------------------------------------------------------
+GITHUB_API="https://api.github.com/repos/prometheus/node_exporter/releases/latest"
+LATEST_TAG=$(wget -qO- "$GITHUB_API" | jq -r '.tag_name')
+[[ -n $LATEST_TAG ]] || fail "Could not obtain latest Node Exporter version."
+LATEST_VERSION="${LATEST_TAG#v}"  # strip leading 'v'
+
+# ------------------------------------------------------------------
+# 4. Download & extract into a temporary directory
+# ------------------------------------------------------------------
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+TARBALL="node_exporter-${LATEST_VERSION}.linux-${ARCH}.tar.gz"
+DOWNLOAD_URL="https://github.com/prometheus/node_exporter/releases/download/${LATEST_TAG}/${TARBALL}"
+
+wget -qO "${WORK_DIR}/${TARBALL}" "$DOWNLOAD_URL" \
+  || fail "Failed to download ${TARBALL}."
+tar -xzf "${WORK_DIR}/${TARBALL}" -C "$WORK_DIR" \
+  || fail "Extraction failed."
+
+# ------------------------------------------------------------------
+# 5. Create system user (idempotent)
+# ------------------------------------------------------------------
+if ! id -u node_exporter >/dev/null 2>&1; then
+  useradd --system --no-create-home --shell /usr/sbin/nologin node_exporter
 fi
 
-# Check if wget is installed
-if ! [ -x "$(command -v wget)" ]; then
-    echo "Error: wget is not installed. Please install wget and try again."
-    exit 2
-fi
+# ------------------------------------------------------------------
+# 6. Install binary
+# ------------------------------------------------------------------
+install -o root -g root -m 0755 \
+  "${WORK_DIR}/node_exporter-${LATEST_VERSION}.linux-${ARCH}/node_exporter" \
+  /usr/bin/node_exporter
 
-# Check if jq is installed
-if ! [ -x "$(command -v jq)" ]; then
-    echo "Error: jq is not installed. Please install jq and try again."
-    exit 3
-fi
+# ------------------------------------------------------------------
+# 7. Deploy systemd unit
+# ------------------------------------------------------------------
+SYSTEMD_UNIT="/etc/systemd/system/node_exporter.service"
+wget -qO "$SYSTEMD_UNIT" \
+  https://github.com/yaroslav-gwit/HosterApps/raw/refs/heads/main/NodeExporter/Linux/node_exporter.service \
+  || fail "Failed to download node_exporter.service."
+chmod 644 "$SYSTEMD_UNIT"
 
-# Detect the architecture
-ARCHITECTURE=$(uname -m)
-ARCH=""
-if [ "$ARCHITECTURE" == "x86_64" ]; then
-    ARCH="amd64"
-else
-    echo "Error: This script only supports x86_64 architecture"
-    exit 4
-fi
-
-# Find the latest version of Prometheus
-LATEST_VERSION=$(wget -qO- https://api.github.com/repos/prometheus/node_exporter/releases/latest | jq -r '.tag_name')
-LATEST_VERSION=${LATEST_VERSION:1} # Remove the 'v' from the version number
-
-# Download Prometheus
-# shellcheck disable=SC2086
-wget https://github.com/prometheus/node_exporter/releases/download/v${LATEST_VERSION}/node_exporter-${LATEST_VERSION}.linux-${ARCH}.tar.gz
-tar -xvzf node_exporter*.tar.gz
-mv node_exporter*${ARCH} node_exporter # Move the extracted directory to a generic name
-
-# Create NodeExporter user and group
-useradd --no-create-home --shell /bin/false node_exporter
-groupadd node_exporter || true
-usermod -a -G node_exporter node_exporter || true
-
-# Copy NodeExporter binaries to /usr/local/bin and assign permissions
-cp node_exporter/node_exporter /usr/local/bin/
-chown node_exporter:node_exporter /usr/local/bin/node_exporter
-chmod 0755 /usr/local/bin/node_exporter
-
-# Create NodeExporter systemd service file
-cat <<'EOF' >/etc/systemd/system/node_exporter.service
-[Unit]
-Description=Prometheus node_exporter service
-After=network.target
-
-[Service]
-User=node_exporter
-Group=node_exporter
-Type=simple
-ExecStart=/usr/local/bin/node_exporter
-# To start on a custom port:
-# ExecStart=/usr/local/bin/node_exporter --web.listen-address=:9200
-
-[Install]
-WantedBy=multi-user.target
-
-EOF
-
-# Start Prometheus service
+# ------------------------------------------------------------------
+# 8. Enable & start the service
+# ------------------------------------------------------------------
 systemctl daemon-reload
-systemctl start node_exporter
-systemctl enable node_exporter
+systemctl enable --now node_exporter
 
-# Clean up downloaded files
-rm -fv node_exporter*.tar.gz
-rm -rfv node_exporter
-
-# Check the status of the Prometheus service before exiting
-echo
-echo
-systemctl status node_exporter | cat
-echo
+# ------------------------------------------------------------------
+# 9. Done
+# ------------------------------------------------------------------
+printf '\nNode Exporter %s installed successfully!\n' "$LATEST_VERSION"
+printf 'Service status: systemctl status node_exporter\n'
+printf 'Follow logs:    journalctl -u node_exporter -f\n'
+printf 'Metrics URL:    http://localhost:9100/metrics\n'
