@@ -1,31 +1,57 @@
 [Unit]
 Description=Prometheus monitoring system and time series database
-Wants=network-online.target
+Documentation=https://prometheus.io/docs/
 After=network-online.target
+Wants=network-online.target
+# StartLimitInterval must be > StartLimitBurst * RestartSec
+StartLimitInterval=60
+StartLimitBurst=5
 
 [Service]
 User=prometheus
 Group=prometheus
 Type=simple
+SyslogIdentifier=prometheus
 
-# The following lines are commented out because systemd will manage logging. 
-# If you want to log to a specific file, uncomment these lines and adjust the path accordingly.
-# ExecStartPre=/usr/bin/mkdir -p /var/log/prometheus
-# ExecStartPre=/usr/bin/touch /var/log/prometheus/prometheus.log
-# ExecStartPre=/usr/bin/chown -R prometheus:prometheus /var/log/prometheus
-
-ExecStart=/usr/local/bin/prometheus \
+ExecStart=/usr/bin/prometheus \
     --config.file=/etc/prometheus/prometheus.yml \
     --storage.tsdb.path=/var/lib/prometheus \
-    --web.console.templates=/etc/prometheus/consoles \
-    --web.console.libraries=/etc/prometheus/console_libraries \
     --log.level=info \
     --log.format=json \
-    --storage.tsdb.retention.time=365d \
-    --web.enable-remote-write-receiver
+    --storage.tsdb.retention.time=365d
+# To enable remote write receiver (e.g. for Grafana Agent):
+# --web.enable-remote-write-receiver
 
 ExecReload=/usr/bin/kill -HUP $MAINPID
-SyslogIdentifier=prometheus
+
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/prometheus
+ReadOnlyPaths=/etc/prometheus
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# Prometheus runs on port 9090 and needs no special capabilities
+CapabilityBoundingSet=
+
+# Process limits (Prometheus can open many files for active time series)
+LimitNOFILE=65535
+LimitNPROC=4096
 
 [Install]
 WantedBy=multi-user.target

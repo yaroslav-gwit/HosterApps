@@ -36,14 +36,25 @@ Another requirement is to execute all scripts from under the `root` user, aka `s
 `deploy.sh` automatically installs Prometheus on (almost) any Linux distribution running under `systemd`.
 Tested on Debian 12, AlmaLinux 9 and AlmaLinux 8.
 
-> **NOTE**  
-> deploy.sh only works on x64 systems for now.  
-> More architectures might be coming in the future (I just don't have any way of testing those right now).
+> **NOTE**
+> deploy.sh supports `x86_64`, `arm64`, and `armv7` architectures.
 
 To start this deployment script you'll need to execute the below:
 
 ```shell
 curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/Prometheus/Linux/deploy.sh | bash
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--enable-remote-write` | Enables the remote write receiver (`--web.enable-remote-write-receiver`). Useful when ingesting metrics from Grafana Agent or other Prometheus-compatible agents. |
+
+Example with remote write enabled:
+
+```shell
+curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/Prometheus/Linux/deploy.sh | bash -s -- --enable-remote-write
 ```
 
 ## Destroy.sh
@@ -89,8 +100,6 @@ The TSDB retention is set to 365 days. I feel like it's a sane default for most 
 
 ### Remote Write Receiver
 
-Remote write receiver is enabled by default. More information on this feature here:
+Remote write receiver is **disabled by default**. Pass `--enable-remote-write` to `deploy.sh` to enable it (see Flags section above).
 
-```link
-https://prometheus.io/docs/prometheus/latest/feature_flags/#remote-write-receiver
-```
+More information: https://prometheus.io/docs/prometheus/latest/feature_flags/#remote-write-receiver
