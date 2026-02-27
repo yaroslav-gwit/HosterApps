@@ -46,9 +46,8 @@ Another requirement is to execute all scripts from under the `root` user, e.g. `
 `deploy.sh` automatically installs `smartctl_exporter` on (almost) any Linux distribution running under `systemd`.
 Tested on Debian 12, AlmaLinux 9 and AlmaLinux 8.
 
-> **NOTE**  
-> deploy.sh only works on x64 systems for now.  
-> More architectures might be coming in the future (I just don't have any way of testing those in my lab).
+> **NOTE**
+> deploy.sh supports `x86_64`, `arm64`, and `armv7` architectures.
 
 To start the deployment script you'll need to execute the one-liner below:
 

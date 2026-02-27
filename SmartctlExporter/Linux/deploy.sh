@@ -1,99 +1,93 @@
 #!/usr/bin/env bash
-set -e
+# ==========================================================
+#   Install the latest smartctl_exporter release on Linux
+# ==========================================================
+set -euo pipefail
 
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-    echo "Please run this script as root"
-    exit 1
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+fail() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "Required command '$1' not found."
+}
+
+# ------------------------------------------------------------------
+# 1. Pre-flight checks
+# ------------------------------------------------------------------
+[[ $EUID -eq 0 ]] || fail "This script must be run as root."
+
+require_cmd wget
+require_cmd jq
+require_cmd systemctl
+require_cmd smartctl
+
+if command -v smartctl_exporter >/dev/null 2>&1; then
+  fail "smartctl_exporter is already installed. Use the update or destroy script instead."
 fi
 
-# Check if wget is installed
-if ! [ -x "$(command -v wget)" ]; then
-    echo "Error: wget is not installed. Please install wget and try again."
-    exit 2
-fi
+# ------------------------------------------------------------------
+# 2. Detect architecture
+# ------------------------------------------------------------------
+case "$(uname -m)" in
+  x86_64)        ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  armv7l)        ARCH=armv7 ;;
+  *) fail "Unsupported architecture: $(uname -m)" ;;
+esac
 
-# check if jq is installed
-if ! [ -x "$(command -v jq)" ]; then
-    echo "error: jq is not installed. please install jq and try again."
-    exit 3
-fi
+# ------------------------------------------------------------------
+# 3. Determine the latest release
+# ------------------------------------------------------------------
+GITHUB_API="https://api.github.com/repos/prometheus-community/smartctl_exporter/releases/latest"
+LATEST_TAG=$(wget -qO- "$GITHUB_API" | jq -r '.tag_name')
+[[ -n $LATEST_TAG ]] || fail "Could not obtain latest smartctl_exporter version."
+LATEST_VERSION="${LATEST_TAG#v}"  # strip leading 'v'
 
-# check if smartctl is installed
-if ! [ -x "$(command -v smartctl)" ]; then
-    echo "error: smartctl is not installed. please install smartmontools and try again."
-    exit 3
-fi
+# ------------------------------------------------------------------
+# 4. Download & extract into a temporary directory
+# ------------------------------------------------------------------
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
 
-# check if smartctl_exporter is already installed
-if [ -x "$(command -v smartctl_exporter)" ]; then
-    echo "error: smartctl_exporter is already installed. please use the update or uninstall script instead."
-    exit 3
-fi
+TARBALL="smartctl_exporter-${LATEST_VERSION}.linux-${ARCH}.tar.gz"
+DOWNLOAD_URL="https://github.com/prometheus-community/smartctl_exporter/releases/download/${LATEST_TAG}/${TARBALL}"
 
-# Detect the architecture
-ARCHITECTURE=$(uname -m)
-ARCH=""
-if [ "$ARCHITECTURE" == "x86_64" ]; then
-    ARCH="amd64"
-else
-    echo "Error: This script only supports x86_64 architecture (at least for now)"
-    exit 4
-fi
+wget -qO "${WORK_DIR}/${TARBALL}" "$DOWNLOAD_URL" \
+  || fail "Failed to download ${TARBALL}."
+tar -xzf "${WORK_DIR}/${TARBALL}" -C "$WORK_DIR" \
+  || fail "Extraction failed."
 
-# Find the latest version of Prometheus
-LATEST_VERSION=$(wget -qO- https://api.github.com/repos/prometheus-community/smartctl_exporter/releases/latest | jq -r '.tag_name')
-LATEST_VERSION=${LATEST_VERSION:1} # Remove the 'v' from the version number
+# ------------------------------------------------------------------
+# 5. Install binary
+# ------------------------------------------------------------------
+install -o root -g root -m 0755 \
+  "${WORK_DIR}/smartctl_exporter-${LATEST_VERSION}.linux-${ARCH}/smartctl_exporter" \
+  /usr/bin/smartctl_exporter
 
-# Download SmartctlExporter
-# shellcheck disable=SC2086
-wget https://github.com/prometheus-community/smartctl_exporter/releases/download/v${LATEST_VERSION}/smartctl_exporter-${LATEST_VERSION}.linux-${ARCH}.tar.gz
-tar -xvzf smartctl_exporter*.tar.gz
-mv smartctl_exporter*${ARCH} smartctl_exporter # Move the extracted directory to a generic name
+# ------------------------------------------------------------------
+# 6. Deploy systemd unit
+# ------------------------------------------------------------------
+SYSTEMD_UNIT="/etc/systemd/system/smartctl_exporter.service"
+wget -qO "$SYSTEMD_UNIT" \
+  https://github.com/yaroslav-gwit/HosterApps/raw/refs/heads/main/SmartctlExporter/Linux/smartctl_exporter.service \
+  || fail "Failed to download smartctl_exporter.service."
+chmod 644 "$SYSTEMD_UNIT"
 
-# Create smartctl_exporter user and group
-# smartctl_exporter must run as root!
-
-# Copy smartctl_exporter binaries to /usr/local/bin and assign permissions
-cp smartctl_exporter/smartctl_exporter /usr/local/bin/
-chown root:root /usr/local/bin/smartctl_exporter
-chmod 0755 /usr/local/bin/smartctl_exporter
-
-# Create smartctl_exporter systemd service file
-wget https://github.com/yaroslav-gwit/HosterApps/raw/refs/heads/main/SmartctlExporter/Linux/smartctl_exporter.service -O /etc/systemd/system/smartctl_exporter.service
-chmod 0644 /etc/systemd/system/smartctl_exporter.service
-chown root:root /etc/systemd/system/smartctl_exporter.service
-
-# Start smartctl_exporter service
+# ------------------------------------------------------------------
+# 7. Enable & start the service
+# ------------------------------------------------------------------
 systemctl daemon-reload
-systemctl enable smartctl_exporter --now
+systemctl enable --now smartctl_exporter
 
-# Clean up downloaded files
-rm -rf smartctl_exporter*.tar.gz
-rm -rf smartctl_exporter
-
-# Check the status of the smartctl_exporter service before exiting
-set +e # Ignore errors for the status check
-echo
-echo
-
-sleep 5 # Wait for a few seconds to allow the service to start
-echo "SmartctlExporter service status:"
-systemctl is-active smartctl_exporter
-# shellcheck disable=SC2181
-if [ $? -eq 0 ]; then
-    echo
-    echo
-    echo "SmartctlExporter is now up-and-running."
-else
-    echo
-    echo
-    echo "SmartctlExporter is not running!"
-fi
-echo
-echo "You can check the service status with:"
-echo "systemctl status smartctl_exporter"
-echo
-echo "You can also check the logs with:"
-echo "journalctl -u smartctl_exporter -f"
-echo
+# ------------------------------------------------------------------
+# 8. Done
+# ------------------------------------------------------------------
+printf '\nsmartctl_exporter %s installed successfully!\n' "$LATEST_VERSION"
+printf 'Service status: systemctl status smartctl_exporter\n'
+printf 'Follow logs:    journalctl -u smartctl_exporter -f\n'
+printf 'Metrics URL:    http://localhost:9633/metrics\n'

@@ -1,17 +1,38 @@
 [Unit]
 Description=Prometheus smartctl_exporter service
-After=network.target
-# This number must be greater than StartLimitBurst * RestartSec
-StartLimitInterval=50
+Documentation=https://github.com/prometheus-community/smartctl_exporter
+After=network-online.target
+Wants=network-online.target
+# StartLimitInterval must be > StartLimitBurst * RestartSec
+StartLimitInterval=60
 StartLimitBurst=5
 
 [Service]
+# smartctl_exporter requires root to access raw disk devices via smartctl
 User=root
 Group=root
 Type=simple
-ExecStart=/usr/local/bin/smartctl_exporter
+SyslogIdentifier=smartctl_exporter
+
+ExecStart=/usr/bin/smartctl_exporter
+
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=15
+
+# Security hardening (limited by root requirement, but still useful)
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+# Process limits
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
