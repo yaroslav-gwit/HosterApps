@@ -1,0 +1,54 @@
+[Unit]
+Description=Prometheus AlertManager
+Documentation=https://prometheus.io/docs/alerting/latest/alertmanager/
+After=network-online.target
+Wants=network-online.target
+# StartLimitInterval must be > StartLimitBurst * RestartSec
+StartLimitInterval=60
+StartLimitBurst=5
+
+[Service]
+User=alertmanager
+Group=alertmanager
+Type=simple
+SyslogIdentifier=alertmanager
+
+ExecStart=/usr/bin/alertmanager \
+    --config.file=/etc/alertmanager/alertmanager.yml \
+    --storage.path=/var/lib/alertmanager \
+    --log.level=info \
+    --log.format=json
+
+ExecReload=/usr/bin/kill -HUP $MAINPID
+
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=15
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/alertmanager
+ReadOnlyPaths=/etc/alertmanager
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# AlertManager runs on port 9093 and needs no special capabilities
+CapabilityBoundingSet=
+
+# Process limits
+LimitNOFILE=65535
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target
