@@ -23,22 +23,21 @@ TimeoutStartSec=30
 TimeoutStopSec=15
 
 # Security hardening
+# Keep it light: node_exporter needs read access to /proc, /sys, and
+# /sys/fs/cgroup to export host-level metrics (network interfaces, disks,
+# kernel tunables, cgroups, etc.).
 NoNewPrivileges=yes
 PrivateTmp=yes
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=yes
-ProtectControlGroups=yes
 ProtectKernelModules=yes
-ProtectKernelTunables=yes
-RestrictAddressFamilies=AF_INET AF_INET6
-RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
-MemoryDenyWriteExecute=yes
 LockPersonality=yes
 SystemCallArchitectures=native
-# node_exporter runs on port 9100 and needs no special capabilities
-CapabilityBoundingSet=
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_NET_ADMIN CAP_SYS_PTRACE
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_NET_ADMIN CAP_SYS_PTRACE
 
 # Process limits
 LimitNOFILE=65535
