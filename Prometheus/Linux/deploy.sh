@@ -23,6 +23,8 @@ Usage: deploy.sh [OPTIONS]
 Options:
   --enable-remote-write   Enable Prometheus remote write receiver
                           (--web.enable-remote-write-receiver)
+  --no-start              Install only; do not enable/start the systemd service
+                          (useful for chroot environments)
 
 USAGE
   exit 1
@@ -32,9 +34,11 @@ USAGE
 # 1. Parse flags
 # ------------------------------------------------------------------
 ENABLE_REMOTE_WRITE=false
+NO_START=false
 for arg in "$@"; do
   case "$arg" in
     --enable-remote-write) ENABLE_REMOTE_WRITE=true ;;
+    --no-start)            NO_START=true ;;
     --help|-h) usage ;;
     *) fail "Unknown flag: $arg" ;;
   esac
@@ -112,9 +116,9 @@ global:
   scrape_interval: 60s
 
 scrape_configs:
-  - job_name: 'prometheus'
-    static_configs:
-      - targets: ['localhost:9090']
+#  - job_name: 'prometheus'
+#    static_configs:
+#      - targets: ['localhost:9090']
 EOF
   chown prometheus:prometheus /etc/prometheus/prometheus.yml
   chmod 640 /etc/prometheus/prometheus.yml
@@ -191,7 +195,13 @@ chmod 644 /etc/systemd/system/prometheus.service
 # 11. Enable & start the service
 # ------------------------------------------------------------------
 systemctl daemon-reload
-systemctl enable --now prometheus
+if [[ $NO_START == false ]]; then
+  systemctl enable --now prometheus
+else
+  systemctl enable prometheus
+  printf 'Service enabled but not started (--no-start). Start manually with:\n'
+  printf '  systemctl start prometheus\n'
+fi
 
 # ------------------------------------------------------------------
 # 12. Done

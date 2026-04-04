@@ -16,6 +16,30 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Required command '$1' not found."
 }
 
+usage() {
+  cat >&2 <<'USAGE'
+Usage: deploy.sh [OPTIONS]
+
+Options:
+  --no-start   Install only; do not enable/start the systemd service
+               (useful for chroot environments)
+
+USAGE
+  exit 1
+}
+
+# ------------------------------------------------------------------
+# 1. Parse flags
+# ------------------------------------------------------------------
+NO_START=false
+for arg in "$@"; do
+  case "$arg" in
+    --no-start) NO_START=true ;;
+    --help|-h)  usage ;;
+    *)          fail "Unknown flag: $arg" ;;
+  esac
+done
+
 # ------------------------------------------------------------------
 # 1. Pre-flight checks
 # ------------------------------------------------------------------
@@ -51,7 +75,13 @@ chmod 644 "$SYSTEMD_UNIT"
 # 4. Enable & start the service
 # ------------------------------------------------------------------
 systemctl daemon-reload
-systemctl enable --now scaphandre
+if [[ $NO_START == false ]]; then
+  systemctl enable --now scaphandre
+else
+  systemctl enable scaphandre
+  printf 'Service enabled but not started (--no-start). Start manually with:\n'
+  printf '  systemctl start scaphandre\n'
+fi
 
 # ------------------------------------------------------------------
 # 5. Done
