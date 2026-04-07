@@ -85,14 +85,22 @@ For example:
 ```
 /opt/hoster/qemu/
 ├── 10.2.2_2026-04-05/              ← versioned install
-│   ├── bin/
-│   │   ├── qemu-system-x86_64      ← main VM hypervisor binary
-│   │   ├── qemu-img                 ← disk image creation/conversion
-│   │   ├── qemu-nbd                 ← NBD server for QEMU images
-│   │   ├── swtpm                    ← software TPM 2.0 daemon
-│   │   ├── swtpm_setup              ← TPM provisioning helper
-│   │   ├── swtpm_ioctl              ← TPM control utility
-│   │   └── virtiofsd                ← virtio-fs vhost-user daemon
+│   ├── bin/                         ← wrapper scripts (entry points)
+│   │   ├── qemu-system-x86_64      ← sets LD_LIBRARY_PATH, execs libexec/
+│   │   ├── qemu-img
+│   │   ├── qemu-nbd
+│   │   ├── swtpm
+│   │   ├── swtpm_setup
+│   │   ├── swtpm_ioctl
+│   │   └── virtiofsd
+│   ├── libexec/                     ← real ELF binaries
+│   │   ├── qemu-system-x86_64
+│   │   ├── qemu-img
+│   │   ├── qemu-nbd
+│   │   ├── swtpm
+│   │   ├── swtpm_setup
+│   │   ├── swtpm_ioctl
+│   │   └── virtiofsd
 │   ├── firmware/
 │   │   ├── OVMF_CODE_4M.fd         ← UEFI code (standard boot)
 │   │   ├── OVMF_CODE_4M.secboot.fd ← UEFI code (Secure Boot)
@@ -106,14 +114,33 @@ For example:
 │   ├── share/
 │   │   └── qemu/                    ← QEMU data (keymaps, device ROMs, etc.)
 │   ├── lib/
-│   │   └── bundled/                 ← bundled shared libraries
-│   ├── libexec/                     ← QEMU helper binaries
+│   │   └── bundled/                 ← shared libraries (private to QEMU)
 │   └── build-info.txt              ← version + build date metadata
 ├── latest -> 10.2.2_2026-04-05/    ← symlink to most recent install
-└── bin/                             ← symlinks to latest version's binaries
+└── bin/                             ← symlinks to latest version's wrapper scripts
     ├── qemu-system-x86_64 -> ../10.2.2_2026-04-05/bin/qemu-system-x86_64
     ├── qemu-img -> ...
     └── ...
+```
+
+### How wrapper scripts work
+
+The `bin/` directory contains thin shell wrappers, not the real ELF binaries.
+Each wrapper sets `LD_LIBRARY_PATH` to the bundled libs directory before
+exec'ing the real binary from `libexec/`. This keeps bundled libraries
+**completely private** to QEMU — they are never registered globally via
+`ldconfig` or `ld.so.conf.d`, so they cannot interfere with unrelated host
+binaries like curl, openssl, etc.
+
+```bash
+# Example: bin/qemu-system-x86_64
+#!/usr/bin/env bash
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SELF_DIR}/../lib/bundled"
+if [[ -d "${LIB_DIR}" ]]; then
+    export LD_LIBRARY_PATH="${LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+exec "${SELF_DIR}/../libexec/qemu-system-x86_64" "$@"
 ```
 
 ### Convenience paths (always point to latest installed version)
@@ -375,5 +402,7 @@ sources, compiles everything, bundles shared libraries, and emits a single
 - SPICE and VirtGL support are enabled for remote display.
 - The installer does **not** create systemd services — QEMU is invoked by
   Hoster, not run as a standalone daemon.
-- The bundled shared libraries are isolated under `<version>/lib/bundled/` and
-  registered via `/etc/ld.so.conf.d/hoster-qemu.conf`.
+- Bundled shared libraries live under `<version>/lib/bundled/` and are loaded
+  privately via `LD_LIBRARY_PATH` in the wrapper scripts. Nothing is registered
+  globally — no `ldconfig`, no `ld.so.conf.d` files — so bundled libs cannot
+  interfere with other host binaries.

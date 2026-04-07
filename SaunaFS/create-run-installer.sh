@@ -121,11 +121,11 @@ DESTDIR="${STAGED_ROOT}" cmake --install "${BUILD_DIR}"
 # incompatible versions) on target distros such as Rocky Linux.  We scan every
 # ELF binary/library we just staged, collect their resolved shared-lib paths
 # from the *build* host, and copy everything that is not part of glibc or the
-# Linux dynamic linker into the payload.  An ld.so.conf.d snippet ensures the
-# target host's linker will find the bundled copies.
+# Linux dynamic linker into the payload.  Bundled libraries are kept private
+# to SaunaFS via LD_LIBRARY_PATH wrapper scripts — no global ldconfig changes.
 # ---------------------------------------------------------------------------
 readonly BUNDLE_LIB_DIR="${STAGED_ROOT}/usr/lib/saunafs/bundled"
-readonly BUNDLE_LDCONF="${STAGED_ROOT}/etc/ld.so.conf.d/saunafs-bundled.conf"
+readonly LIBEXEC_DIR="${STAGED_ROOT}/usr/lib/saunafs/libexec"
 
 is_glibc_or_system_lib() {
 	case "${1}" in
@@ -138,6 +138,26 @@ is_glibc_or_system_lib() {
 	*/ld-linux*) return 0 ;;
 	# kernel virtual DSO
 	linux-vdso.so*) return 0 ;;
+	# PAM and authentication — bundling these from the build host breaks
+	# login on the target (e.g. Rocky) because PAM modules load them too.
+	*/libpam.so*|*/libpam_misc.so*|*/libaudit.so*|*/libcap.so*|\
+	*/libcap-ng.so*)
+		return 0 ;;
+	# systemd, SELinux, and core security libraries — same risk as PAM:
+	# the target's own modules expect the distro-native copies.
+	*/libsystemd.so*|*/libselinux.so*|*/libsepol.so*|\
+	*/libgcrypt.so*|*/libgpg-error.so*|*/libkeyutils.so*|\
+	*/libkrb5.so*|*/libgssapi_krb5.so*|*/libk5crypto.so*|\
+	*/libcom_err.so*|*/libkrb5support.so*)
+		return 0 ;;
+	# TLS/crypto — mismatched OpenSSL breaks every TLS consumer on the host.
+	*/libssl.so*|*/libcrypto.so*)
+		return 0 ;;
+	# Compression and low-level utilities commonly present on every distro.
+	*/libz.so*|*/liblzma.so*|*/liblz4.so*|*/libzstd.so*|\
+	*/libbz2.so*|*/libpcre*.so*|*/libexpat.so*|\
+	*/libblkid.so*|*/libmount.so*|*/libuuid.so*)
+		return 0 ;;
 	esac
 	return 1
 }
@@ -187,14 +207,53 @@ bundle_shared_libraries() {
 		fi
 	done
 
-	# Create ld.so.conf.d snippet so ldconfig picks up the bundled libs.
-	mkdir -p "$(dirname "${BUNDLE_LDCONF}")"
-	printf '%s\n' "/usr/lib/saunafs/bundled" > "${BUNDLE_LDCONF}"
-
 	note "Bundled $(find "${BUNDLE_LIB_DIR}" -type f | wc -l) shared libraries into the payload"
 }
 
+# ---------------------------------------------------------------------------
+# Replace staged ELF binaries in usr/bin/ and usr/sbin/ with thin wrapper
+# scripts that set LD_LIBRARY_PATH to the bundled directory before exec'ing
+# the real binary from usr/lib/saunafs/libexec/.  This keeps bundled
+# libraries private to SaunaFS processes — identical to the QEMU approach.
+# ---------------------------------------------------------------------------
+relocate_binaries_and_create_wrappers() {
+	local dir="" binary="" bin_name=""
+	local -a staged_dirs=(
+		"${STAGED_ROOT}/usr/bin"
+		"${STAGED_ROOT}/usr/sbin"
+	)
+
+	mkdir -p "${LIBEXEC_DIR}"
+
+	for dir in "${staged_dirs[@]}"; do
+		[[ -d "${dir}" ]] || continue
+
+		for binary in "${dir}/"*; do
+			[[ -f "${binary}" ]] || continue
+			# Only wrap actual ELF executables; skip scripts and other files.
+			file -b "${binary}" | grep -q 'ELF' || continue
+
+			bin_name="$(basename "${binary}")"
+			mv "${binary}" "${LIBEXEC_DIR}/${bin_name}"
+
+			cat > "${binary}" <<'WRAPPER'
+#!/usr/bin/env bash
+_SAUNAFS_BUNDLED="/usr/lib/saunafs/bundled"
+if [ -d "$_SAUNAFS_BUNDLED" ]; then
+    export LD_LIBRARY_PATH="${_SAUNAFS_BUNDLED}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+exec /usr/lib/saunafs/libexec/__BIN_NAME__ "$@"
+WRAPPER
+			sed -i "s/__BIN_NAME__/${bin_name}/" "${binary}"
+			chmod +x "${binary}"
+		done
+	done
+
+	note "Relocated ELF binaries to libexec/ and created LD_LIBRARY_PATH wrappers"
+}
+
 bundle_shared_libraries
+relocate_binaries_and_create_wrappers
 
 install -m 0755 "${SCRIPT_DIR}/install-bundle.sh" "${SUPPORT_DIR}/install-bundle.sh"
 install -m 0644 "${SCRIPT_DIR}/install-layout-common.sh" "${SUPPORT_DIR}/install-layout-common.sh"

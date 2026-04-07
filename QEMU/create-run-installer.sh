@@ -31,24 +31,54 @@ trap cleanup EXIT
 PAYLOAD_DIR="${WORK_DIR}/payload"
 mkdir -p "${PAYLOAD_DIR}" "${OUTPUT_DIR}"
 
-# Copy the entire QEMU installation tree into the payload
-cp -a "${QEMU_PREFIX}/bin"       "${PAYLOAD_DIR}/bin"
-cp -a "${QEMU_PREFIX}/firmware"  "${PAYLOAD_DIR}/firmware"
+# Copy the QEMU installation tree into the payload.
+# Real binaries go into libexec/; bin/ will contain thin wrapper scripts that
+# set LD_LIBRARY_PATH so bundled libs stay private to QEMU.
+mkdir -p "${PAYLOAD_DIR}/libexec" "${PAYLOAD_DIR}/bin"
 
-# Copy share dir (keymaps, QEMU device ROMs, etc.) if it exists
+# Move all executables from bin/ into libexec/
+for binary in "${QEMU_PREFIX}/bin/"*; do
+	[[ -f "${binary}" ]] || continue
+	cp -a "${binary}" "${PAYLOAD_DIR}/libexec/"
+done
+
+# Copy QEMU's own libexec helpers (e.g. qemu-bridge-helper) into libexec/ too
+if [[ -d "${QEMU_PREFIX}/libexec" ]]; then
+	cp -a "${QEMU_PREFIX}/libexec/"* "${PAYLOAD_DIR}/libexec/" 2>/dev/null || true
+fi
+
+cp -a "${QEMU_PREFIX}/firmware" "${PAYLOAD_DIR}/firmware"
+
 if [[ -d "${QEMU_PREFIX}/share" ]]; then
 	cp -a "${QEMU_PREFIX}/share" "${PAYLOAD_DIR}/share"
 fi
 
-# Copy bundled libraries
 if [[ -d "${QEMU_PREFIX}/lib" ]]; then
 	cp -a "${QEMU_PREFIX}/lib" "${PAYLOAD_DIR}/lib"
 fi
 
-# Copy libexec (QEMU helper binaries like qemu-bridge-helper)
-if [[ -d "${QEMU_PREFIX}/libexec" ]]; then
-	cp -a "${QEMU_PREFIX}/libexec" "${PAYLOAD_DIR}/libexec"
+# ---------------------------------------------------------------------------
+# Create wrapper scripts in bin/ that set LD_LIBRARY_PATH privately.
+# Each wrapper resolves its own directory at runtime so the install location
+# does not need to be known at package time.
+# ---------------------------------------------------------------------------
+note "Creating wrapper scripts for bundled binaries"
+for binary in "${PAYLOAD_DIR}/libexec/"*; do
+	[[ -f "${binary}" && -x "${binary}" ]] || continue
+	bin_name="$(basename "${binary}")"
+
+	cat > "${PAYLOAD_DIR}/bin/${bin_name}" <<'WRAPPER'
+#!/usr/bin/env bash
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SELF_DIR}/../lib/bundled"
+if [[ -d "${LIB_DIR}" ]]; then
+	export LD_LIBRARY_PATH="${LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
+exec "${SELF_DIR}/../libexec/__BIN_NAME__" "$@"
+WRAPPER
+	sed -i "s/__BIN_NAME__/${bin_name}/" "${PAYLOAD_DIR}/bin/${bin_name}"
+	chmod +x "${PAYLOAD_DIR}/bin/${bin_name}"
+done
 
 # Embed version metadata
 cat > "${PAYLOAD_DIR}/build-info.txt" <<EOF

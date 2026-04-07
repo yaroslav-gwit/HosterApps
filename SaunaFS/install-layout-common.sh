@@ -648,6 +648,14 @@ restart_previously_active_services() {
 }
 
 refresh_dynamic_linker_cache() {
+	# Remove the global bundled-library ldconfig snippet from earlier installer
+	# versions.  Bundled libraries are now kept private to SaunaFS processes via
+	# LD_LIBRARY_PATH wrapper scripts in /usr/lib/saunafs/libexec/.
+	if [[ -f "/etc/ld.so.conf.d/saunafs-bundled.conf" ]]; then
+		note "Removing legacy /etc/ld.so.conf.d/saunafs-bundled.conf"
+		rm -f "/etc/ld.so.conf.d/saunafs-bundled.conf"
+	fi
+
 	if command -v ldconfig >/dev/null 2>&1; then
 		ldconfig
 	fi

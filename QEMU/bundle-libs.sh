@@ -10,12 +10,33 @@ readonly BUNDLE_DIR="${PREFIX}/lib/bundled"
 
 is_glibc_or_system_lib() {
 	case "${1}" in
+	# glibc core
 	*/libc.so*|*/libm.so*|*/libdl.so*|*/librt.so*|*/libpthread.so*|\
 	*/libutil.so*|*/libresolv.so*|*/libnss_*.so*|*/libnsl.so*|\
 	*/libmvec.so*|*/libBrokenLocale.so*|*/libanl.so*|*/libcrypt.so*)
 		return 0 ;;
+	# dynamic linker
 	*/ld-linux*) return 0 ;;
+	# kernel virtual DSO
 	linux-vdso.so*) return 0 ;;
+	# PAM, authentication, and audit — should never be bundled across distros.
+	*/libpam.so*|*/libpam_misc.so*|*/libaudit.so*|*/libcap.so*|\
+	*/libcap-ng.so*)
+		return 0 ;;
+	# systemd, SELinux, and core security libraries.
+	*/libsystemd.so*|*/libselinux.so*|*/libsepol.so*|\
+	*/libgcrypt.so*|*/libgpg-error.so*|*/libkeyutils.so*|\
+	*/libkrb5.so*|*/libgssapi_krb5.so*|*/libk5crypto.so*|\
+	*/libcom_err.so*|*/libkrb5support.so*)
+		return 0 ;;
+	# TLS/crypto — the target distro's own copies should be used.
+	*/libssl.so*|*/libcrypto.so*)
+		return 0 ;;
+	# Compression and low-level utilities present on every distro.
+	*/libz.so*|*/liblzma.so*|*/liblz4.so*|*/libzstd.so*|\
+	*/libbz2.so*|*/libpcre*.so*|*/libexpat.so*|\
+	*/libblkid.so*|*/libmount.so*|*/libuuid.so*)
+		return 0 ;;
 	esac
 	return 1
 }
