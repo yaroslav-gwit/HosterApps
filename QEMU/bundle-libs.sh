@@ -7,6 +7,11 @@ set -euo pipefail
 
 readonly PREFIX="${1:?Usage: bundle-libs.sh /opt/qemu}"
 readonly BUNDLE_DIR="${PREFIX}/lib/bundled"
+SEARCH_DIRS=("${PREFIX}/bin" "${PREFIX}/libexec" "${PREFIX}/lib")
+
+iter_elf_files() {
+	find "${SEARCH_DIRS[@]}" -type f \( -executable -o -name '*.so' -o -name '*.so.*' \) 2>/dev/null
+}
 
 is_glibc_or_system_lib() {
 	case "${1}" in
@@ -32,9 +37,10 @@ is_glibc_or_system_lib() {
 	# TLS/crypto — the target distro's own copies should be used.
 	*/libssl.so*|*/libcrypto.so*)
 		return 0 ;;
-	# Compression and low-level utilities present on every distro.
+	# Compression and low-level utilities commonly present on Linux hosts.
+	# Keep libbz2 bundled: some target systems do not install it by default.
 	*/libz.so*|*/liblzma.so*|*/liblz4.so*|*/libzstd.so*|\
-	*/libbz2.so*|*/libpcre*.so*|*/libexpat.so*|\
+	*/libpcre*.so*|*/libexpat.so*|\
 	*/libblkid.so*|*/libmount.so*|*/libuuid.so*)
 		return 0 ;;
 	esac
@@ -53,7 +59,7 @@ while IFS= read -r binary; do
 		is_glibc_or_system_lib "${lib_path}" && continue
 		lib_paths["${lib_path}"]=1
 	done < <(ldd "${binary}" 2>/dev/null || true)
-done < <(find "${PREFIX}/bin" "${PREFIX}/lib" -type f \( -executable -o -name '*.so' -o -name '*.so.*' \) 2>/dev/null)
+done < <(iter_elf_files)
 
 if [[ ${#lib_paths[@]} -eq 0 ]]; then
 	echo "[bundle-libs] No extra shared libraries to bundle"
@@ -74,5 +80,22 @@ for lib_path in "${!lib_paths[@]}"; do
 		ln -sf "${real_name}" "${BUNDLE_DIR}/${base_name}"
 	fi
 done
+
+while IFS= read -r binary; do
+	[[ -f "${binary}" ]] || continue
+	file -b "${binary}" | grep -q 'ELF' || continue
+
+	while IFS= read -r lib_line; do
+		lib_path="$(printf '%s' "${lib_line}" | sed -n 's/^.*=> \(\/[^ ]*\) (.*/\1/p')"
+		[[ -n "${lib_path}" ]] || continue
+		is_glibc_or_system_lib "${lib_path}" && continue
+
+		lib_name="$(basename "${lib_path}")"
+		if [[ ! -e "${BUNDLE_DIR}/${lib_name}" ]]; then
+			echo "[bundle-libs] Missing bundled dependency ${lib_name} required by ${binary}" >&2
+			exit 1
+		fi
+	done < <(ldd "${binary}" 2>/dev/null || true)
+done < <(iter_elf_files)
 
 echo "[bundle-libs] Bundled $(find "${BUNDLE_DIR}" -type f | wc -l) shared libraries"
