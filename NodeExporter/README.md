@@ -51,3 +51,37 @@ Hoster-specific deployment:
 ```shell
 curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/NodeExporter/Linux/deploy.sh | bash -s -- --hoster-collectors
 ```
+
+## Troubleshooting
+
+If the journal shows `collector failed` for `arp` or `netdev` with
+`socket: address family not supported by protocol`, the systemd socket-family
+sandbox is too restrictive for the running node_exporter process. Redeploying
+with the current unit fixes it:
+
+```shell
+curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/NodeExporter/Linux/deploy.sh | bash -s -- --hoster-collectors
+```
+
+For a manual one-host fix, make sure the service has the current allow-list and
+restart it:
+
+```shell
+sudo systemctl edit node_exporter
+```
+
+Add:
+
+```ini
+[Service]
+RestrictAddressFamilies=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+```
+
+Then apply it:
+
+```shell
+sudo systemctl daemon-reload
+sudo systemctl restart node_exporter
+sudo journalctl -u node_exporter -n 50 --no-pager
+```

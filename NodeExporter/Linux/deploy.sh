@@ -132,7 +132,12 @@ fi
 # ------------------------------------------------------------------
 systemctl daemon-reload
 if [[ $NO_START == false ]]; then
-  systemctl enable --now node_exporter
+  systemctl enable node_exporter
+  if systemctl is-active --quiet node_exporter; then
+    systemctl restart node_exporter
+  else
+    systemctl start node_exporter
+  fi
 else
   systemctl enable node_exporter
   printf 'Service enabled but not started (--no-start). Start manually with:\n'
