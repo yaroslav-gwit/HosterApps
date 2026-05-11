@@ -85,3 +85,24 @@ sudo systemctl daemon-reload
 sudo systemctl restart node_exporter
 sudo journalctl -u node_exporter -n 50 --no-pager
 ```
+
+If the `pressure` collector fails, the host kernel does not expose Linux PSI
+metrics at `/proc/pressure`. The Hoster collector allow-list enables this
+collector by default; fix the host kernel boot options if this metric is
+required on that machine.
+
+To confirm the host state:
+
+```shell
+ls -la /proc/pressure
+zgrep CONFIG_PSI /proc/config.gz /boot/config-$(uname -r) 2>/dev/null
+cat /proc/cmdline
+```
+
+To fix on a RHEL-based system:
+
+```shell
+sudo grubby --update-kernel=ALL --remove-args="psi=0"
+sudo grubby --update-kernel=ALL --args="psi=1"
+sudo reboot
+```
