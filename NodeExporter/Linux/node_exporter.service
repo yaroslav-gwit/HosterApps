@@ -31,7 +31,12 @@ PrivateTmp=yes
 ProtectSystem=full
 ProtectHome=yes
 ProtectKernelModules=yes
-RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+# AF_PACKET is required by node_exporter's arp / netdev collectors on newer
+# releases (procfs → netlink → ethtool fallback). AF_UNIX is included for the
+# odd IPC path some client libraries take. The meaningful protection from
+# this directive — blocking exotic families like AF_BLUETOOTH / AF_CAN /
+# AF_X25 — is preserved.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
