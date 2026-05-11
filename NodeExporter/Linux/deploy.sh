@@ -21,8 +21,15 @@ usage() {
 Usage: deploy.sh [OPTIONS]
 
 Options:
-  --no-start   Install only; do not enable/start the systemd service
-               (useful for chroot environments)
+  --no-start            Install only; do not enable/start the systemd service
+                        (useful for chroot environments)
+  --hoster-collectors   Install the Hoster-curated collector allow-list as a
+                        systemd drop-in. Pins node_exporter to a known set of
+                        collectors so behaviour is identical across every
+                        Hoster host, regardless of distro / kernel modules /
+                        future upstream changes. Remove the drop-in at
+                        /etc/systemd/system/node_exporter.service.d/
+                        hoster-collectors.conf to revert to upstream defaults.
 
 USAGE
   exit 1
@@ -32,11 +39,13 @@ USAGE
 # 1. Parse flags
 # ------------------------------------------------------------------
 NO_START=false
+HOSTER_COLLECTORS=false
 for arg in "$@"; do
   case "$arg" in
-    --no-start) NO_START=true ;;
-    --help|-h)  usage ;;
-    *)          fail "Unknown flag: $arg" ;;
+    --no-start)          NO_START=true ;;
+    --hoster-collectors) HOSTER_COLLECTORS=true ;;
+    --help|-h)           usage ;;
+    *)                   fail "Unknown flag: $arg" ;;
   esac
 done
 
@@ -103,6 +112,20 @@ wget -qO "$SYSTEMD_UNIT" \
   https://github.com/yaroslav-gwit/HosterApps/raw/refs/heads/main/NodeExporter/Linux/node_exporter.service \
   || fail "Failed to download node_exporter.service."
 chmod 644 "$SYSTEMD_UNIT"
+
+# ------------------------------------------------------------------
+# 7a. Hoster-curated collector allow-list (optional drop-in)
+# ------------------------------------------------------------------
+DROP_IN_DIR="/etc/systemd/system/node_exporter.service.d"
+DROP_IN_FILE="${DROP_IN_DIR}/hoster-collectors.conf"
+if [[ $HOSTER_COLLECTORS == true ]]; then
+  install -d -m 0755 "$DROP_IN_DIR"
+  wget -qO "$DROP_IN_FILE" \
+    https://github.com/yaroslav-gwit/HosterApps/raw/refs/heads/main/NodeExporter/Linux/hoster-collectors.conf \
+    || fail "Failed to download hoster-collectors.conf."
+  chmod 644 "$DROP_IN_FILE"
+  printf 'Hoster collector allow-list installed: %s\n' "$DROP_IN_FILE"
+fi
 
 # ------------------------------------------------------------------
 # 8. Enable & start the service

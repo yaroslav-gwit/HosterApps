@@ -45,3 +45,9 @@ To start this deployment script you'll need to execute the below:
 ```shell
 curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/NodeExporter/Linux/deploy.sh | bash
 ```
+
+Hoster-specific deployment:
+
+```shell
+curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/NodeExporter/Linux/deploy.sh | bash -s -- --hoster-collectors
+```
