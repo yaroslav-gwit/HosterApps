@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+
+# Shared operator/installer helpers. Callers enable their own shell options.
+
+readonly WEBOS_CONFIG_DIR="${WEBOS_CONFIG_DIR:-/etc/hoster/webos}"
+readonly WEBOS_DEFAULTS_FILE="${WEBOS_CONFIG_DIR}/defaults.env"
+readonly WEBOS_USERS_DIR="${WEBOS_CONFIG_DIR}/users"
+readonly WEBOS_CERTS_DIR="${WEBOS_CONFIG_DIR}/certs"
+readonly WEBOS_DEFAULT_USER_FILE="${WEBOS_CONFIG_DIR}/default-user"
+
+webos_config_get() {
+	local file="${1}" key="${2}"
+	python3 - "${file}" "${key}" <<'PY'
+import pathlib
+import shlex
+import sys
+
+path = pathlib.Path(sys.argv[1])
+key = sys.argv[2]
+raw = ""
+for line in path.read_text().splitlines():
+    if line.startswith(f"{key}="):
+        raw = line.split("=", 1)[1].strip()
+if not raw:
+    print("")
+elif raw[0] in "\"'" or "\\" in raw:
+    lexer = shlex.shlex(raw, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    print(" ".join(lexer))
+else:
+    print(raw)
+PY
+}
+
+webos_config_set() {
+	local file="${1}" key="${2}" value="${3}"
+	[[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || return 2
+	python3 - "${file}" "${key}" "${value}" <<'PY'
+import os
+import pathlib
+import sys
+import tempfile
+
+path = pathlib.Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+
+def encode(text):
+    if all(ch.isalnum() or ch in "._/:@+-" for ch in text):
+        return text
+    escaped = (
+        text.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("$", "\\$")
+        .replace("`", "\\`")
+    )
+    return f'"{escaped}"'
+
+replacement = f"{key}={encode(value)}\n"
+lines = path.read_text().splitlines(keepends=True)
+output = []
+found = False
+for line in lines:
+    if line.startswith(f"{key}="):
+        if not found:
+            output.append(replacement)
+            found = True
+    else:
+        output.append(line)
+if not found:
+    output.append(replacement)
+
+fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+try:
+    with os.fdopen(fd, "w") as handle:
+        handle.writelines(output)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
+webos_validate_user() {
+	local candidate="${1}" uid shell home
+	getent passwd "${candidate}" >/dev/null || return 1
+	uid="$(id -u "${candidate}")"
+	[[ "${uid}" -ne 0 ]] || return 1
+	IFS=: read -r _ _ _ _ _ home shell < <(getent passwd "${candidate}")
+	case "${shell}" in
+	*/nologin|*/false) return 1 ;;
+	esac
+	[[ -d "${home}" ]] || return 1
+	runuser -u "${candidate}" -- test -x "${home}" || return 1
+	runuser -u "${candidate}" -- test -w "${home}" || return 1
+}
+
+webos_user_config() {
+	printf '%s/%s.env\n' "${WEBOS_USERS_DIR}" "${1}"
+}
+
+webos_service_instance() {
+	systemd-escape --template=webos@.service "${1}"
+}
+
+webos_default_user() {
+	[[ -r "${WEBOS_DEFAULT_USER_FILE}" ]] || return 1
+	local user
+	user="$(tr -d '[:space:]' < "${WEBOS_DEFAULT_USER_FILE}")"
+	[[ -n "${user}" && -r "$(webos_user_config "${user}")" ]] || return 1
+	printf '%s\n' "${user}"
+}
+
+webos_set_default_user() {
+	local user="${1}" temporary
+	[[ -r "$(webos_user_config "${user}")" ]] || return 1
+	temporary="$(mktemp "${WEBOS_CONFIG_DIR}/.default-user.XXXXXX")"
+	printf '%s\n' "${user}" > "${temporary}"
+	chmod 0644 "${temporary}"
+	mv -f "${temporary}" "${WEBOS_DEFAULT_USER_FILE}"
+}
+
+webos_list_users() {
+	local path
+	shopt -s nullglob
+	for path in "${WEBOS_USERS_DIR}"/*.env; do
+		basename "${path}" .env
+	done | sort
+	shopt -u nullglob
+}
+
+webos_resolve_user() {
+	local requested="${1:-}" user
+	local -a users=()
+	if [[ -n "${requested}" ]]; then
+		[[ -r "$(webos_user_config "${requested}")" ]] || return 1
+		printf '%s\n' "${requested}"
+		return
+	fi
+	if user="$(webos_default_user 2>/dev/null)"; then
+		printf '%s\n' "${user}"
+		return
+	fi
+	mapfile -t users < <(webos_list_users)
+	[[ "${#users[@]}" -eq 1 ]] || return 1
+	printf '%s\n' "${users[0]}"
+}
+
+webos_validate_listen() {
+	[[ "${1}" =~ ^[A-Za-z0-9:._-]+$ ]]
+}
+
+webos_validate_port() {
+	[[ "${1}" =~ ^[0-9]+$ ]] &&
+		(( 10#${1} >= 1 && 10#${1} <= 65535 ))
+}
+
+webos_port_available() {
+	local port="${1}" excluded_user="${2:-}" config user configured_port
+	shopt -s nullglob
+	for config in "${WEBOS_USERS_DIR}"/*.env; do
+		user="$(basename "${config}" .env)"
+		[[ "${user}" == "${excluded_user}" ]] && continue
+		configured_port="$(webos_config_get "${config}" WEBOS_PORT)"
+		if [[ "${configured_port}" == "${port}" ]]; then
+			shopt -u nullglob
+			return 1
+		fi
+	done
+	shopt -u nullglob
+	return 0
+}
+
+webos_allocate_port() {
+	local excluded_user="${1:-}" port
+	for port in $(seq 8081 8999); do
+		if webos_port_available "${port}" "${excluded_user}"; then
+			printf '%s\n' "${port}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+webos_random_password() {
+	od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+webos_certificate_paths() {
+	local user="${1}"
+	printf '%s/%s.crt\n%s/%s.key\n' \
+		"${WEBOS_CERTS_DIR}" "${user}" "${WEBOS_CERTS_DIR}" "${user}"
+}
+
+webos_generate_certificate() {
+	local user="${1}" force="${2:-false}" cert key group host fqdn address
+	local temporary san subject
+	local -a addresses=() paths=() sans=("DNS:localhost" "IP:127.0.0.1" "IP:::1")
+	mapfile -t paths < <(webos_certificate_paths "${user}")
+	cert="${paths[0]}"
+	key="${paths[1]}"
+	if [[ "${force}" != true && -s "${cert}" && -s "${key}" ]]; then
+		return 0
+	fi
+
+	host="$(hostname)"
+	fqdn="$(hostname -f 2>/dev/null || true)"
+	sans+=("DNS:${host}")
+	if [[ -n "${fqdn}" && "${fqdn}" != "${host}" ]]; then
+		sans+=("DNS:${fqdn}")
+	fi
+	read -r -a addresses <<< "$(hostname -I 2>/dev/null || true)"
+	for address in "${addresses[@]}"; do
+		if [[ "${address}" =~ ^[0-9A-Fa-f:.]+$ ]]; then
+			sans+=("IP:${address}")
+		fi
+	done
+	san="$(IFS=,; printf '%s' "${sans[*]}")"
+	subject="/CN=WebOS-${host}-${user}"
+	temporary="$(mktemp -d)"
+	(
+		umask 077
+		openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 825 \
+			-subj "${subject}" \
+			-addext "subjectAltName=${san}" \
+			-keyout "${temporary}/webos.key" \
+			-out "${temporary}/webos.crt" >/dev/null 2>&1
+	)
+	install -d -m 0755 "${WEBOS_CERTS_DIR}"
+	group="$(id -gn "${user}")"
+	install -o root -g root -m 0644 "${temporary}/webos.crt" "${cert}"
+	install -o root -g "${group}" -m 0640 "${temporary}/webos.key" "${key}"
+	rm -rf "${temporary}"
+}
+
+webos_health_address() {
+	case "${1}" in
+	0.0.0.0) printf '127.0.0.1\n' ;;
+	::) printf '[::1]\n' ;;
+	*:*) printf '[%s]\n' "${1}" ;;
+	*) printf '%s\n' "${1}" ;;
+	esac
+}
+
+webos_default_gtk_theme() {
+	printf 'Arc-Dark\n'
+}
+
+webos_wait_for_health() {
+	local user="${1}" attempts="${2:-45}" config service address port auth_user auth_password uid home
+	local xsettings desktop panel profile_dir gtk_theme
+	config="$(webos_user_config "${user}")"
+	service="$(webos_service_instance "${user}")"
+	uid="$(id -u "${user}")"
+	home="$(getent passwd "${user}" | cut -d: -f6)"
+	profile_dir="${home}/.config/hoster-webos"
+	xsettings="${home}/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
+	desktop="${home}/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
+	panel="${home}/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+	address="$(webos_health_address "$(webos_config_get "${config}" WEBOS_LISTEN)")"
+	port="$(webos_config_get "${config}" WEBOS_PORT)"
+	auth_user="$(webos_config_get "${config}" WEBOS_AUTH_USER)"
+	auth_password="$(webos_config_get "${config}" WEBOS_AUTH_PASSWORD)"
+	gtk_theme="$(webos_default_gtk_theme)"
+	for _ in $(seq 1 "${attempts}"); do
+		if systemctl is-active --quiet "${service}" &&
+			curl --insecure --fail --silent --show-error \
+				--user "${auth_user}:${auth_password}" \
+				--max-time 2 "https://${address}:${port}/" >/dev/null 2>&1 &&
+			pgrep -u "${uid}" -x labwc >/dev/null &&
+			pgrep -u "${uid}" -x xfce4-panel >/dev/null &&
+			pgrep -u "${uid}" -x xfdesktop >/dev/null &&
+			pgrep -u "${uid}" -x xfce4-terminal >/dev/null &&
+			[[ -e "${profile_dir}/appearance-v4" &&
+				-e "${profile_dir}/desktop-profile-v3" &&
+				-e "${profile_dir}/desktop-profile-v5" &&
+				-e "${profile_dir}/panel-profile-v6" &&
+				-r /opt/hoster/webos/current/share/icons/webos-whisker.png ]] &&
+			grep -q "value=\"${gtk_theme}\"" "${xsettings}" 2>/dev/null &&
+			grep -q 'value="Papirus-Dark"' "${xsettings}" 2>/dev/null &&
+			grep -q 'value="breeze_cursors"' "${xsettings}" 2>/dev/null &&
+			grep -q '/opt/hoster/webos/current/share/backgrounds/webos-wallpaper.jpg' "${desktop}" 2>/dev/null &&
+			grep -q 'name="include-all-workspaces" type="bool" value="true"' "${panel}" 2>/dev/null &&
+			grep -q 'value="whiskermenu"' "${panel}" 2>/dev/null &&
+			grep -q 'value="/opt/hoster/webos/current/share/icons/webos-whisker.png"' "${panel}" 2>/dev/null &&
+			grep -q 'name="size" type="uint" value="27"' "${panel}" 2>/dev/null &&
+			grep -q 'name="icon-size" type="uint" value="25"' "${panel}" 2>/dev/null; then
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+webos_validate_user_config() {
+	local user="${1}" config listen port cert key
+	config="$(webos_user_config "${user}")"
+	[[ -r "${config}" ]] || return 1
+	[[ "$(webos_config_get "${config}" WEBOS_USER)" == "${user}" ]] || return 1
+	listen="$(webos_config_get "${config}" WEBOS_LISTEN)"
+	port="$(webos_config_get "${config}" WEBOS_PORT)"
+	webos_validate_listen "${listen}" || return 1
+	webos_validate_port "${port}" || return 1
+	[[ -n "$(webos_config_get "${config}" WEBOS_AUTH_USER)" ]] || return 1
+	[[ -n "$(webos_config_get "${config}" WEBOS_AUTH_PASSWORD)" ]] || return 1
+	cert="$(webos_config_get "${config}" WEBOS_HTTPS_CERT)"
+	key="$(webos_config_get "${config}" WEBOS_HTTPS_KEY)"
+	[[ -r "${cert}" && -r "${key}" ]] || return 1
+	openssl x509 -in "${cert}" -noout -checkend 0 >/dev/null 2>&1 || return 1
+}

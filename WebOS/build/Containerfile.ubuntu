@@ -1,0 +1,109 @@
+# syntax=docker/dockerfile:1
+
+ARG SELKIES_REVISION=12f5033b43b5b44a68bdd1ad804a49985832566a
+ARG UBUNTU_VERSION=24.04
+
+FROM node:24-bookworm AS frontend
+ARG SELKIES_REVISION
+RUN apt-get update && apt-get install --no-install-recommends -y git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN git init /src \
+    && git -C /src remote add origin https://github.com/selkies-project/selkies.git \
+    && git -C /src fetch --depth 1 origin "${SELKIES_REVISION}" \
+    && git -C /src checkout --detach FETCH_HEAD
+COPY build/selkies-dashboard-webos.patch /project/selkies-dashboard-webos.patch
+COPY assets/webos-favicon.png /project/webos-favicon.png
+RUN git -C /src apply /project/selkies-dashboard-webos.patch \
+    && install -m 0644 /project/webos-favicon.png \
+       /src/addons/selkies-dashboard/public/icon.png
+RUN cd /src/addons/selkies-web-core \
+    && npm install --no-audit --no-fund \
+    && npm run build \
+    && cd /src/addons/selkies-dashboard \
+    && cp ../selkies-web-core/dist/selkies-core.js src/ \
+    && npm install --no-audit --no-fund \
+    && SELKIES_INJECT=1 SELKIES_MODE=websockets \
+       SELKIES_UPLOAD_DIR=/home/webos/Downloads npm run build \
+    && mkdir -p dist/src \
+    && cp ../selkies-web-core/dist/selkies-core.js dist/src/ \
+    && cp ../universal-touch-gamepad/universalTouchGamepad.js dist/src/ \
+    && cp -r ../selkies-web-core/dist/jsdb dist/
+
+FROM ubuntu:${UBUNTU_VERSION} AS builder
+ARG SELKIES_REVISION
+ARG UBUNTU_VERSION
+ARG PIXELFLUX_VERSION=2.0.0
+ARG PCMFLUX_VERSION=2.0.0
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install --no-install-recommends -y \
+      build-essential ca-certificates curl git libffi-dev libxkbcommon-dev \
+      pkg-config python3-dev python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+RUN git init /src \
+    && git -C /src remote add origin https://github.com/selkies-project/selkies.git \
+    && git -C /src fetch --depth 1 origin "${SELKIES_REVISION}" \
+    && git -C /src checkout --detach FETCH_HEAD
+COPY --from=frontend /src/addons/selkies-dashboard/dist /src/src/selkies/selkies_web
+COPY build/python-constraints.txt /project/python-constraints.txt
+RUN sed -i \
+      -e "s/\"pixelflux\"/\"pixelflux==${PIXELFLUX_VERSION}\"/" \
+      -e "s/\"pcmflux\"/\"pcmflux==${PCMFLUX_VERSION}\"/" \
+      /src/pyproject.toml \
+    && python3 -m venv /build-venv \
+    && /build-venv/bin/pip install --no-cache-dir --upgrade build pip wheel \
+    && mkdir -p /build/payload/wheels \
+    && /build-venv/bin/pip wheel --no-cache-dir \
+       --constraint /project/python-constraints.txt \
+       --wheel-dir /build/payload/wheels /src
+
+ARG WEBOS_VERSION=0.2.0
+ARG BUILD_DATE=unknown
+ARG SOURCE_COMMIT=unknown
+ARG SOURCE_DATE_EPOCH=0
+COPY VERSION /project/VERSION
+COPY config /build/payload/config
+COPY completions /build/payload/completions
+COPY runtime /build/payload/runtime
+COPY assets/webos-wallpaper.jpg /build/payload/assets/webos-wallpaper.jpg
+COPY assets/webos-whisker.png /build/payload/assets/webos-whisker.png
+COPY systemd /build/payload/systemd
+COPY installer/install-webos.sh /build/payload/install-webos.sh
+COPY installer/uninstall-webos.sh /build/payload/uninstall-webos.sh
+COPY installer/create-run-installer.sh /build/create-run-installer.sh
+COPY build/fetch-xfce420-noble.sh /build/fetch-xfce420-noble.sh
+COPY LICENSE ATTRIBUTIONS.md /build/payload/licenses/
+RUN cp /src/LICENSE /build/payload/licenses/SELKIES-MPL-2.0.txt \
+    && chmod 0755 /build/fetch-xfce420-noble.sh \
+    && if [ "${UBUNTU_VERSION}" = 24.04 ]; then \
+         /build/fetch-xfce420-noble.sh /build/payload; \
+       fi \
+    && chmod 0755 /build/payload/install-webos.sh \
+       /build/payload/uninstall-webos.sh \
+       /build/payload/runtime/webos \
+       /build/payload/runtime/webos-common \
+       /build/payload/runtime/webos-session \
+       /build/payload/runtime/webos-xfce-session \
+       /build/create-run-installer.sh \
+    && printf '%s\n' \
+       "WEBOS_VERSION=${WEBOS_VERSION}" \
+       "TARGET_ID=ubuntu" \
+       "TARGET_VERSION=${UBUNTU_VERSION}" \
+       "TARGET_ARCH=amd64" \
+       "SELKIES_REVISION=${SELKIES_REVISION}" \
+       "PIXELFLUX_VERSION=${PIXELFLUX_VERSION}" \
+       "PCMFLUX_VERSION=${PCMFLUX_VERSION}" \
+       "XFCE_PANEL_BUILD=$([ "${UBUNTU_VERSION}" = 24.04 ] && printf '4.20.3-1~bpo24.04' || printf distribution)" \
+       "XFCE_SETTINGS_BUILD=$([ "${UBUNTU_VERSION}" = 24.04 ] && printf '4.20.1-1ubuntu1~bpo24.04' || printf distribution)" \
+       "LINUXSERVER_REFERENCE_REVISION=9d7047537c30f978f3b9a5f0d82ba397fe510257" \
+       "BUILD_DATE=${BUILD_DATE}" \
+       "SOURCE_COMMIT=${SOURCE_COMMIT}" \
+       "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
+       > /build/payload/build-info.txt \
+    && PAYLOAD_DIR=/build/payload \
+       OUTPUT_FILE="/build/out/webos-v${WEBOS_VERSION}-ubuntu-${UBUNTU_VERSION}-amd64.run" \
+       SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+       /build/create-run-installer.sh
+
+FROM scratch AS artifact
+COPY --from=builder /build/out/ /

@@ -1,0 +1,2 @@
+# XFCE is started explicitly by webos-session through Labwc's --startup option.
+# Administrators may add extra per-VM startup commands here.

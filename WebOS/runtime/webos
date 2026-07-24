@@ -1,0 +1,679 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly PROGRAM_NAME="webos"
+readonly BUILD_INFO="/opt/hoster/webos/build-info.txt"
+readonly USER_TEMPLATE="/opt/hoster/webos/current/share/webos-user.env"
+readonly COMMON_LIB="/opt/hoster/webos/current/bin/webos-common"
+
+note() { printf '[%s] %s\n' "${PROGRAM_NAME}" "$*"; }
+warn() { printf '[%s] Warning: %s\n' "${PROGRAM_NAME}" "$*" >&2; }
+die() { printf '[%s] Error: %s\n' "${PROGRAM_NAME}" "$*" >&2; exit 1; }
+
+[[ -r "${COMMON_LIB}" ]] || die "WebOS helper library is missing: ${COMMON_LIB}"
+# shellcheck source=/dev/null
+source "${COMMON_LIB}"
+
+usage() {
+	cat <<'USAGE'
+WebOS operator control
+
+Usage:
+  webos [--user USER] COMMAND
+  webos user COMMAND [USER] [OPTIONS]
+
+Session commands:
+  status                         Show service status and safe configuration.
+  start | stop | restart         Control the selected desktop service.
+  logs [--follow] [--lines N]    Read the selected service logs.
+  url                            Print the selected HTTPS URL.
+  diagnostics                    Show service, TLS, listener, process, and Docker checks.
+  version                        Print installed build metadata.
+
+  config show [--show-secrets]   Show the selected user's configuration.
+  config edit                    Edit, validate, restart, and roll back on failure.
+  config set title TITLE         Set the browser tab title.
+  config reset title             Restore WebOS-<hostname>-<username>.
+  config set browser-user USER   Set the HTTP basic-auth username.
+  config set browser-password    Prompt securely for a new browser password.
+  config rotate-password         Generate and apply a new browser password.
+  config set listen ADDRESS      Set the Selkies listener.
+  config set port PORT           Set the Selkies TCP port.
+  config set encoder ENCODER     Set the video encoder.
+  config set cpu true|false      Toggle CPU encoding.
+  config set debug true|false    Toggle Selkies debug logging.
+  config set resolution WxH      Set the initial desktop resolution.
+
+User registry commands:
+  user list                      List registered WebOS users and services.
+  user add USER [OPTIONS]        Register and start an existing Linux user.
+  user remove USER               Remove WebOS for one user; preserve their account/home.
+  user show USER                 Show safe per-user configuration.
+  user credentials USER          Show the browser URL and credentials.
+  user set-default USER          Select the user used when --user is omitted.
+  user renew-certificate USER    Replace that session's self-signed certificate.
+  user start|stop|restart USER   Control one registered session.
+
+User add options:
+  --listen ADDRESS               Bind address; default comes from defaults.env.
+  --port PORT                    Unique port; default is the first free port from 8081.
+  --title TITLE                  Custom title; blank uses the generated default.
+  --browser-user USER            Basic-auth username; defaults to the Linux username.
+  --prompt-password              Prompt instead of generating a password.
+
+Examples:
+  sudo webos user add alice --port 8081
+  sudo webos user add bob --listen 0.0.0.0 --port 8082
+  sudo webos --user bob config set title "WebOS-QA"
+  sudo webos user credentials bob
+
+All browser sessions use HTTPS with independent self-signed certificates.
+Configuration changes are rolled back when the authenticated health check fails.
+USAGE
+}
+
+require_root() {
+	[[ "${EUID}" -eq 0 ]] || die "Run this command with sudo"
+}
+
+require_install() {
+	[[ -r "${BUILD_INFO}" ]] || die "WebOS build metadata is missing: ${BUILD_INFO}"
+	[[ -r "${USER_TEMPLATE}" ]] || die "WebOS user template is missing: ${USER_TEMPLATE}"
+	[[ -r "${WEBOS_DEFAULTS_FILE}" ]] || die "WebOS defaults are missing: ${WEBOS_DEFAULTS_FILE}"
+}
+
+TARGET_USER=""
+CONFIG_FILE=""
+
+select_target() {
+	local requested="${1:-}"
+	require_install
+	if ! TARGET_USER="$(webos_resolve_user "${requested}")"; then
+		if [[ -n "${requested}" ]]; then
+			die "WebOS user is not registered: ${requested}"
+		fi
+		die "No unambiguous default WebOS user; use --user USER or 'webos user set-default USER'"
+	fi
+	CONFIG_FILE="$(webos_user_config "${TARGET_USER}")"
+}
+
+config_get() {
+	local key="${1}" value
+	value="$(webos_config_get "${CONFIG_FILE}" "${key}")"
+	if [[ -n "${value}" ]]; then
+		printf '%s\n' "${value}"
+	elif [[ -r "${WEBOS_DEFAULTS_FILE}" ]]; then
+		webos_config_get "${WEBOS_DEFAULTS_FILE}" "${key}"
+	else
+		printf '\n'
+	fi
+}
+
+config_set() {
+	webos_config_set "${CONFIG_FILE}" "${1}" "${2}" ||
+		die "Could not safely update ${1}"
+}
+
+service_instance() {
+	webos_service_instance "${TARGET_USER}"
+}
+
+wait_for_health() {
+	webos_wait_for_health "${TARGET_USER}" 45
+}
+
+display_host() {
+	local listen
+	listen="$(config_get WEBOS_LISTEN)"
+	case "${listen}" in
+	0.0.0.0|::) hostname -f 2>/dev/null || hostname ;;
+	*) printf '%s\n' "${listen}" ;;
+	esac
+}
+
+display_url() {
+	local host
+	host="$(display_host)"
+	[[ "${host}" == *:* ]] && host="[${host}]"
+	printf 'https://%s:%s/\n' "${host}" "$(config_get WEBOS_PORT)"
+}
+
+validate_runtime_config() {
+	webos_validate_user_config "${TARGET_USER}" || return 1
+	webos_port_available "$(config_get WEBOS_PORT)" "${TARGET_USER}"
+}
+
+restart_and_check() {
+	local service
+	service="$(service_instance)"
+	systemctl restart "${service}"
+	wait_for_health
+}
+
+apply_pairs() {
+	local backup
+	require_root
+	require_install
+	(( $# > 0 && $# % 2 == 0 )) || die "Internal configuration update error"
+	backup="$(mktemp)"
+	cp -p "${CONFIG_FILE}" "${backup}"
+	while (( $# > 0 )); do
+		config_set "${1}" "${2}"
+		shift 2
+	done
+	if validate_runtime_config && restart_and_check; then
+		rm -f "${backup}"
+		note "Configuration applied and ${TARGET_USER}'s WebOS session restarted"
+		return
+	fi
+	cp -p "${backup}" "${CONFIG_FILE}"
+	rm -f "${backup}"
+	systemctl restart "$(service_instance)" 2>/dev/null || true
+	die "Health check failed; restored the previous configuration"
+}
+
+show_config() {
+	local show_secrets="${1:-false}" title password
+	require_root
+	require_install
+	title="$(config_get WEBOS_TITLE)"
+	[[ -n "${title}" ]] || title="WebOS-$(hostname)-${TARGET_USER}"
+	password="$(config_get WEBOS_AUTH_PASSWORD)"
+	printf 'Desktop user:       %s\n' "${TARGET_USER}"
+	printf 'Default session:    %s\n' "$(
+		[[ "$(webos_default_user 2>/dev/null || true)" == "${TARGET_USER}" ]] &&
+			printf yes || printf no
+	)"
+	printf 'Browser title:      %s\n' "${title}"
+	printf 'Browser user:       %s\n' "$(config_get WEBOS_AUTH_USER)"
+	if [[ "${show_secrets}" == true ]]; then
+		printf 'Browser password:   %s\n' "${password}"
+	else
+		printf 'Browser password:   %s\n' "$(
+			[[ -n "${password}" ]] && printf '<set; hidden>' || printf '<not set>'
+		)"
+	fi
+	printf 'HTTPS URL:           %s\n' "$(display_url)"
+	printf 'Listen address:     %s\n' "$(config_get WEBOS_LISTEN)"
+	printf 'Port:               %s\n' "$(config_get WEBOS_PORT)"
+	printf 'TLS certificate:    %s\n' "$(config_get WEBOS_HTTPS_CERT)"
+	printf 'Encoder:            %s\n' "$(config_get WEBOS_ENCODER)"
+	printf 'CPU encoding:       %s\n' "$(config_get WEBOS_USE_CPU)"
+	printf 'Initial resolution: %sx%s\n' \
+		"$(config_get WEBOS_INITIAL_WIDTH)" "$(config_get WEBOS_INITIAL_HEIGHT)"
+	printf 'Debug logging:      %s\n' "$(config_get WEBOS_DEBUG)"
+}
+
+show_status() {
+	local service
+	require_root
+	service="$(service_instance)"
+	printf 'Service: %s (%s, %s)\n' \
+		"${service}" \
+		"$(systemctl is-enabled "${service}" 2>/dev/null || true)" \
+		"$(systemctl is-active "${service}" 2>/dev/null || true)"
+	show_config false
+}
+
+validate_bool() {
+	[[ "${1}" == true || "${1}" == false ]] ||
+		die "Expected true or false, got: ${1}"
+}
+
+configure_set() {
+	local setting="${1:-}"
+	shift || true
+	case "${setting}" in
+	title)
+		(( $# > 0 )) || die "config set title requires a value"
+		apply_pairs WEBOS_TITLE "$*"
+		;;
+	browser-user)
+		[[ $# -eq 1 && -n "${1}" && "${1}" != *:* ]] ||
+			die "Browser username must be non-empty and cannot contain ':'"
+		apply_pairs WEBOS_AUTH_USER "${1}"
+		;;
+	browser-password)
+		[[ $# -eq 0 ]] ||
+			die "Password is prompted securely; do not pass it on the command line"
+		local password confirmation
+		read -rsp "New browser password: " password
+		printf '\n'
+		read -rsp "Confirm browser password: " confirmation
+		printf '\n'
+		[[ -n "${password}" ]] || die "Password cannot be empty"
+		[[ "${password}" == "${confirmation}" ]] || die "Passwords do not match"
+		apply_pairs WEBOS_AUTH_PASSWORD "${password}"
+		;;
+	listen)
+		[[ $# -eq 1 ]] || die "config set listen requires one address"
+		webos_validate_listen "${1}" || die "Invalid listen address"
+		apply_pairs WEBOS_LISTEN "${1}"
+		;;
+	port)
+		[[ $# -eq 1 ]] || die "config set port requires one port"
+		webos_validate_port "${1}" || die "Port must be between 1 and 65535"
+		webos_port_available "${1}" "${TARGET_USER}" ||
+			die "Port ${1} is already assigned to another WebOS user"
+		apply_pairs WEBOS_PORT "${1}"
+		;;
+	encoder)
+		[[ $# -eq 1 ]] || die "config set encoder requires one value"
+		case "${1}" in
+		h264enc|h264enc-striped|openh264enc|jpeg) ;;
+		*) die "Unsupported encoder: ${1}" ;;
+		esac
+		apply_pairs WEBOS_ENCODER "${1}"
+		;;
+	cpu)
+		[[ $# -eq 1 ]] || die "config set cpu requires true or false"
+		validate_bool "${1}"
+		apply_pairs WEBOS_USE_CPU "${1}"
+		;;
+	debug)
+		[[ $# -eq 1 ]] || die "config set debug requires true or false"
+		validate_bool "${1}"
+		apply_pairs WEBOS_DEBUG "${1}"
+		;;
+	resolution)
+		[[ $# -eq 1 && "${1}" =~ ^([0-9]+)x([0-9]+)$ ]] ||
+			die "Resolution must use WIDTHxHEIGHT, for example 1920x1080"
+		(( BASH_REMATCH[1] >= 320 && BASH_REMATCH[1] <= 16384 )) ||
+			die "Width must be between 320 and 16384"
+		(( BASH_REMATCH[2] >= 240 && BASH_REMATCH[2] <= 16384 )) ||
+			die "Height must be between 240 and 16384"
+		apply_pairs \
+			WEBOS_INITIAL_WIDTH "${BASH_REMATCH[1]}" \
+			WEBOS_INITIAL_HEIGHT "${BASH_REMATCH[2]}"
+		;;
+	*) die "Unknown configuration setting: ${setting:-<missing>}" ;;
+	esac
+}
+
+configure() {
+	local action="${1:-show}"
+	shift || true
+	case "${action}" in
+	show)
+		if [[ "${1:-}" == "--show-secrets" && $# -eq 1 ]]; then
+			show_config true
+		elif [[ $# -eq 0 ]]; then
+			show_config false
+		else
+			die "Usage: webos [--user USER] config show [--show-secrets]"
+		fi
+		;;
+	set) configure_set "$@" ;;
+	reset)
+		[[ $# -eq 1 && "${1}" == title ]] ||
+			die "Only 'config reset title' is supported"
+		apply_pairs WEBOS_TITLE ""
+		;;
+	rotate-password)
+		[[ $# -eq 0 ]] || die "Usage: webos config rotate-password"
+		local password
+		password="$(webos_random_password)"
+		apply_pairs WEBOS_AUTH_PASSWORD "${password}"
+		printf 'New browser password: %s\n' "${password}"
+		;;
+	edit)
+		[[ $# -eq 0 ]] || die "Usage: webos config edit"
+		require_root
+		local backup editor
+		local -a editor_command
+		backup="$(mktemp)"
+		cp -p "${CONFIG_FILE}" "${backup}"
+		editor="${VISUAL:-${EDITOR:-vi}}"
+		read -r -a editor_command <<< "${editor}"
+		"${editor_command[@]}" "${CONFIG_FILE}"
+		chmod 0600 "${CONFIG_FILE}"
+		if validate_runtime_config && restart_and_check; then
+			rm -f "${backup}"
+			note "Configuration applied"
+		else
+			cp -p "${backup}" "${CONFIG_FILE}"
+			rm -f "${backup}"
+			systemctl restart "$(service_instance)" 2>/dev/null || true
+			die "Health check failed; restored the previous configuration"
+		fi
+		;;
+	*) die "Unknown config action: ${action}" ;;
+	esac
+}
+
+show_logs() {
+	local follow=false lines=100
+	while [[ $# -gt 0 ]]; do
+		case "${1}" in
+		-f|--follow) follow=true; shift ;;
+		--lines)
+			[[ "${2:-}" =~ ^[0-9]+$ ]] || die "--lines requires a number"
+			lines="${2}"
+			shift 2
+			;;
+		*) die "Unknown logs option: ${1}" ;;
+		esac
+	done
+	require_root
+	if [[ "${follow}" == true ]]; then
+		journalctl -u "$(service_instance)" -n "${lines}" -f
+	else
+		journalctl -u "$(service_instance)" -n "${lines}" --no-pager
+	fi
+}
+
+diagnostics() {
+	require_root
+	local service port cert
+	service="$(service_instance)"
+	port="$(config_get WEBOS_PORT)"
+	cert="$(config_get WEBOS_HTTPS_CERT)"
+	set +e
+	systemctl --no-pager --full status "${service}"
+	printf '\nTLS certificate:\n'
+	openssl x509 -in "${cert}" -noout -subject -issuer -dates -fingerprint -sha256
+	printf '\nListener:\n'
+	ss -ltnp | grep ":${port}"
+	printf '\nDesktop processes for %s:\n' "${TARGET_USER}"
+	pgrep -a -u "$(id -u "${TARGET_USER}")" -x labwc
+	pgrep -a -u "$(id -u "${TARGET_USER}")" -x xfce4-panel
+	pgrep -a -u "$(id -u "${TARGET_USER}")" -x xfdesktop
+	printf '\nDocker:\n'
+	systemctl is-enabled docker.service
+	systemctl is-active docker.service
+	runuser -u "${TARGET_USER}" -- docker info --format 'Server version: {{.ServerVersion}}'
+	printf '\nRecent WebOS logs:\n'
+	journalctl -u "${service}" -n 30 --no-pager
+	set -e
+}
+
+read_prompted_password() {
+	local password confirmation
+	read -rsp "Browser password: " password
+	printf '\n'
+	read -rsp "Confirm browser password: " confirmation
+	printf '\n'
+	[[ -n "${password}" ]] || die "Password cannot be empty"
+	[[ "${password}" == "${confirmation}" ]] || die "Passwords do not match"
+	printf '%s\n' "${password}"
+}
+
+add_user() {
+	local user="${1:-}" listen="" port="" title="" browser_user="" prompt=false
+	local password config service cert key default_listen
+	local -a cert_paths=()
+	[[ -n "${user}" ]] || die "Usage: webos user add USER [OPTIONS]"
+	shift || true
+	while [[ $# -gt 0 ]]; do
+		case "${1}" in
+		--listen)
+			[[ -n "${2:-}" ]] || die "--listen requires an address"
+			listen="${2}"
+			shift 2
+			;;
+		--port)
+			[[ -n "${2:-}" ]] || die "--port requires a port"
+			port="${2}"
+			shift 2
+			;;
+		--title)
+			[[ -n "${2:-}" ]] || die "--title requires a value"
+			title="${2}"
+			shift 2
+			;;
+		--browser-user)
+			[[ -n "${2:-}" ]] || die "--browser-user requires a value"
+			browser_user="${2}"
+			shift 2
+			;;
+		--prompt-password) prompt=true; shift ;;
+		*) die "Unknown user add option: ${1}" ;;
+		esac
+	done
+	require_root
+	require_install
+	webos_validate_user "${user}" ||
+		die "${user} must be an existing, non-root Linux user with a writable home and interactive shell"
+	config="$(webos_user_config "${user}")"
+	[[ ! -e "${config}" ]] ||
+		die "${user} is already registered; use --user ${user} config ... to change it"
+	default_listen="$(webos_config_get "${WEBOS_DEFAULTS_FILE}" WEBOS_LISTEN)"
+	listen="${listen:-${default_listen:-127.0.0.1}}"
+	webos_validate_listen "${listen}" || die "Invalid listen address: ${listen}"
+	if [[ -z "${port}" ]]; then
+		port="$(webos_allocate_port)" || die "No free WebOS port in 8081-8999"
+	fi
+	webos_validate_port "${port}" || die "Port must be between 1 and 65535"
+	webos_port_available "${port}" ||
+		die "Port ${port} is already assigned to another WebOS user"
+	browser_user="${browser_user:-${user}}"
+	[[ -n "${browser_user}" && "${browser_user}" != *:* ]] ||
+		die "Browser username must be non-empty and cannot contain ':'"
+	if [[ "${prompt}" == true ]]; then
+		password="$(read_prompted_password)"
+	else
+		password="$(webos_random_password)"
+	fi
+
+	install -d -m 0755 "${WEBOS_USERS_DIR}" "${WEBOS_CERTS_DIR}"
+	install -m 0600 "${USER_TEMPLATE}" "${config}"
+	webos_config_set "${config}" WEBOS_USER "${user}"
+	webos_config_set "${config}" WEBOS_LISTEN "${listen}"
+	webos_config_set "${config}" WEBOS_PORT "${port}"
+	webos_config_set "${config}" WEBOS_AUTH_USER "${browser_user}"
+	webos_config_set "${config}" WEBOS_AUTH_PASSWORD "${password}"
+	webos_config_set "${config}" WEBOS_TITLE "${title}"
+	mapfile -t cert_paths < <(webos_certificate_paths "${user}")
+	cert="${cert_paths[0]}"
+	key="${cert_paths[1]}"
+	webos_config_set "${config}" WEBOS_HTTPS_CERT "${cert}"
+	webos_config_set "${config}" WEBOS_HTTPS_KEY "${key}"
+	webos_generate_certificate "${user}" false
+
+	if systemctl cat docker.service >/dev/null 2>&1 &&
+		getent group docker >/dev/null &&
+		! id -nG "${user}" | tr ' ' '\n' | grep -qx docker; then
+		usermod -aG docker "${user}"
+		warn "Added ${user} to the docker group; Docker daemon access is root-equivalent"
+	fi
+
+	service="$(webos_service_instance "${user}")"
+	systemctl daemon-reload
+	systemctl enable "${service}" --quiet
+	if ! systemctl restart "${service}" || ! webos_wait_for_health "${user}" 45; then
+		systemctl disable --now "${service}" 2>/dev/null || true
+		rm -f "${config}" "${cert}" "${key}"
+		die "Could not start ${service}; registration was rolled back"
+	fi
+	if ! webos_default_user >/dev/null 2>&1; then
+		webos_set_default_user "${user}"
+	fi
+	note "Registered and started ${user}"
+	printf 'URL:              '
+	TARGET_USER="${user}"
+	CONFIG_FILE="${config}"
+	display_url
+	printf 'Browser user:     %s\n' "${browser_user}"
+	printf 'Browser password: %s\n' "${password}"
+	printf 'Certificate:      %s\n' "${cert}"
+}
+
+remove_user() {
+	local user="${1:-}" config service cert key new_default
+	local -a cert_paths=()
+	[[ -n "${user}" && $# -eq 1 ]] || die "Usage: webos user remove USER"
+	require_root
+	config="$(webos_user_config "${user}")"
+	[[ -r "${config}" ]] || die "WebOS user is not registered: ${user}"
+	service="$(webos_service_instance "${user}")"
+	mapfile -t cert_paths < <(webos_certificate_paths "${user}")
+	cert="${cert_paths[0]}"
+	key="${cert_paths[1]}"
+	systemctl disable --now "${service}" 2>/dev/null || true
+	rm -f "${config}" "${cert}" "${key}"
+	if [[ "$(webos_default_user 2>/dev/null || true)" == "${user}" ||
+		! -r "${WEBOS_DEFAULT_USER_FILE}" ]]; then
+		rm -f "${WEBOS_DEFAULT_USER_FILE}"
+		new_default="$(webos_list_users | head -n 1 || true)"
+		[[ -z "${new_default}" ]] || webos_set_default_user "${new_default}"
+	fi
+	note "Removed ${user}'s WebOS session, credentials, and certificate"
+	note "The Linux account, home directory, sudo policy, and Docker data were preserved"
+}
+
+list_users() {
+	local user config default service title
+	local found=false
+	require_root
+	default="$(webos_default_user 2>/dev/null || true)"
+	printf '%-18s %-7s %-9s %-9s %-7s %s\n' \
+		"USER" "DEFAULT" "ENABLED" "ACTIVE" "PORT" "TITLE"
+	while IFS= read -r user; do
+		found=true
+		config="$(webos_user_config "${user}")"
+		service="$(webos_service_instance "${user}")"
+		title="$(webos_config_get "${config}" WEBOS_TITLE)"
+		[[ -n "${title}" ]] || title="WebOS-$(hostname)-${user}"
+		printf '%-18s %-7s %-9s %-9s %-7s %s\n' \
+			"${user}" \
+			"$([[ "${user}" == "${default}" ]] && printf yes || printf no)" \
+			"$(systemctl is-enabled "${service}" 2>/dev/null || true)" \
+			"$(systemctl is-active "${service}" 2>/dev/null || true)" \
+			"$(webos_config_get "${config}" WEBOS_PORT)" \
+			"${title}"
+	done < <(webos_list_users)
+	[[ "${found}" == true ]] || note "No WebOS users are registered"
+}
+
+show_credentials() {
+	local user="${1:-}"
+	[[ -n "${user}" && $# -eq 1 ]] || die "Usage: webos user credentials USER"
+	select_target "${user}"
+	require_root
+	printf 'URL:              %s\n' "$(display_url)"
+	printf 'Browser user:     %s\n' "$(config_get WEBOS_AUTH_USER)"
+	printf 'Browser password: %s\n' "$(config_get WEBOS_AUTH_PASSWORD)"
+}
+
+renew_certificate() {
+	local user="${1:-}" cert key temporary
+	local -a cert_paths=()
+	[[ -n "${user}" && $# -eq 1 ]] ||
+		die "Usage: webos user renew-certificate USER"
+	select_target "${user}"
+	require_root
+	mapfile -t cert_paths < <(webos_certificate_paths "${user}")
+	cert="${cert_paths[0]}"
+	key="${cert_paths[1]}"
+	temporary="$(mktemp -d)"
+	cp -p "${cert}" "${temporary}/webos.crt"
+	cp -p "${key}" "${temporary}/webos.key"
+	webos_generate_certificate "${user}" true
+	if restart_and_check; then
+		rm -rf "${temporary}"
+		note "Renewed ${user}'s self-signed certificate"
+		openssl x509 -in "${cert}" -noout -subject -dates -fingerprint -sha256
+		return
+	fi
+	cp -p "${temporary}/webos.crt" "${cert}"
+	cp -p "${temporary}/webos.key" "${key}"
+	rm -rf "${temporary}"
+	systemctl restart "$(service_instance)" 2>/dev/null || true
+	die "Certificate renewal failed; restored the previous certificate"
+}
+
+user_command() {
+	local action="${1:-list}" user
+	shift || true
+	case "${action}" in
+	list) [[ $# -eq 0 ]] || die "Usage: webos user list"; list_users ;;
+	add) add_user "$@" ;;
+	remove) remove_user "$@" ;;
+	show)
+		[[ -n "${1:-}" && $# -eq 1 ]] || die "Usage: webos user show USER"
+		select_target "${1}"
+		show_config false
+		;;
+	credentials) show_credentials "$@" ;;
+	set-default)
+		[[ -n "${1:-}" && $# -eq 1 ]] || die "Usage: webos user set-default USER"
+		require_root
+		[[ -r "$(webos_user_config "${1}")" ]] ||
+			die "WebOS user is not registered: ${1}"
+		webos_set_default_user "${1}"
+		note "Default WebOS user set to ${1}"
+		;;
+	renew-certificate) renew_certificate "$@" ;;
+	start|stop|restart)
+		[[ -n "${1:-}" && $# -eq 1 ]] || die "Usage: webos user ${action} USER"
+		user="${1}"
+		select_target "${user}"
+		systemctl "${action}" "$(service_instance)"
+		[[ "${action}" == stop ]] || wait_for_health ||
+			die "Service did not pass its authenticated HTTPS health check"
+		;;
+	*) die "Unknown user command: ${action}" ;;
+	esac
+}
+
+REQUESTED_USER=""
+while [[ $# -gt 0 ]]; do
+	case "${1}" in
+	-u|--user)
+		[[ -n "${2:-}" ]] || die "${1} requires a username"
+		REQUESTED_USER="${2}"
+		shift 2
+		;;
+	*) break ;;
+	esac
+done
+
+command="${1:-}"
+[[ $# -eq 0 ]] || shift
+case "${command}" in
+"")
+	require_root
+	if [[ -r "${BUILD_INFO}" ]]; then
+		list_users
+		printf '\n'
+	fi
+	usage
+	;;
+help|-h|--help) usage ;;
+user)
+	[[ -z "${REQUESTED_USER}" ]] ||
+		die "Use either --user USER or the 'user' subcommand, not both"
+	user_command "$@"
+	;;
+version)
+	[[ $# -eq 0 ]] || die "Usage: webos version"
+	[[ -r "${BUILD_INFO}" ]] || die "WebOS is not installed"
+	cat "${BUILD_INFO}"
+	;;
+status|start|stop|restart|logs|url|diagnostics|config)
+	select_target "${REQUESTED_USER}"
+	case "${command}" in
+	status) [[ $# -eq 0 ]] || die "Usage: webos [--user USER] status"; show_status ;;
+	start|stop|restart)
+		[[ $# -eq 0 ]] || die "Usage: webos [--user USER] ${command}"
+		require_root
+		systemctl "${command}" "$(service_instance)"
+		[[ "${command}" == stop ]] || wait_for_health ||
+			die "Service did not pass its authenticated HTTPS health check"
+		;;
+	logs) show_logs "$@" ;;
+	url)
+		[[ $# -eq 0 ]] || die "Usage: webos [--user USER] url"
+		require_root
+		display_url
+		;;
+	diagnostics)
+		[[ $# -eq 0 ]] || die "Usage: webos [--user USER] diagnostics"
+		diagnostics
+		;;
+	config) configure "$@" ;;
+	esac
+	;;
+*) die "Unknown command: ${command}. Run 'webos help'." ;;
+esac

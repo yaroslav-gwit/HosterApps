@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+  <menu id="root-menu" label="WebOS">
+    <item label="XFCE Terminal">
+      <action name="Execute"><command>xfce4-terminal</command></action>
+    </item>
+    <item label="Files">
+      <action name="Execute"><command>thunar</command></action>
+    </item>
+    <separator />
+    <item label="Reconfigure desktop">
+      <action name="Reconfigure" />
+    </item>
+  </menu>
+</openbox_menu>

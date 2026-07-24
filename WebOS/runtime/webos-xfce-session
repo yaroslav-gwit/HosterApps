@@ -1,0 +1,659 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
+
+note() { printf '[%s] %s\n' "${SCRIPT_NAME}" "$*"; }
+
+: "${DISPLAY:?Labwc did not export an Xwayland DISPLAY}"
+
+WEBOS_DEFAULT_GTK_THEME="Arc-Dark"
+readonly WEBOS_DEFAULT_GTK_THEME
+
+set_xfconf() {
+	local channel="${1}" property="${2}" type="${3}" value="${4}"
+	local current=""
+	# Distribution defaults often create empty, untyped properties while
+	# xfsettingsd is starting. --set reports success for those properties but
+	# XFCE can subsequently restore the empty default. Recreate project-owned
+	# initial values with their intended type and verify the live channel.
+	for _ in $(seq 1 20); do
+		xfconf-query --channel "${channel}" --property "${property}" \
+			--reset 2>/dev/null || true
+		xfconf-query --channel "${channel}" --property "${property}" \
+			--create --type "${type}" --set "${value}"
+		current="$(xfconf-query --channel "${channel}" \
+			--property "${property}" 2>/dev/null || true)"
+		[[ "${current}" == "${value}" ]] && return 0
+		sleep 0.25
+	done
+	note "Could not persist ${channel}:${property}"
+	return 1
+}
+
+ensure_gtk_startup_settings() {
+	local gtk_dir settings_file
+	gtk_dir="${HOME}/.config/gtk-3.0"
+	settings_file="${gtk_dir}/settings.ini"
+
+	# GtkSettings synchronization is live once XFCE's Wayland module loads, but
+	# GTK constructs its first style context before that module is ready. Seed
+	# the first frame through the normal per-user settings file. Never replace a
+	# file the user or administrator already owns; XFCE remains authoritative
+	# after startup and can change these properties live.
+	[[ ! -e "${settings_file}" ]] || return 0
+	note "Creating the initial GTK dark-theme settings"
+	install -d -m 0700 "${gtk_dir}"
+	umask 077
+	{
+		printf '%s\n' \
+			'[Settings]' \
+			"gtk-theme-name=${WEBOS_DEFAULT_GTK_THEME}" \
+			'gtk-icon-theme-name=Papirus-Dark' \
+			'gtk-cursor-theme-name=breeze_cursors'
+	} > "${settings_file}"
+}
+
+prepare_native_appearance_profile() {
+	local appearance_dir marker
+	appearance_dir="${HOME}/.config/hoster-webos"
+	marker="${appearance_dir}/native-appearance-v10"
+
+	[[ ! -e "${marker}" ]] || return 0
+
+	note "Preparing the native Wayland theme, icons, and cursor"
+	set_xfconf xsettings /Net/ThemeName string "${WEBOS_DEFAULT_GTK_THEME}"
+	set_xfconf xsettings /Net/IconThemeName string Papirus-Dark
+	set_xfconf xsettings /Gtk/CursorThemeName string breeze_cursors
+	set_xfconf xsettings /Gtk/CursorThemeSize int 24
+
+	install -d -m 0700 "${appearance_dir}"
+	touch "${marker}"
+}
+
+migrate_arc_theme_v12() {
+	local profile_dir marker settings_file current_theme
+	profile_dir="${HOME}/.config/hoster-webos"
+	marker="${profile_dir}/arc-theme-v12"
+	settings_file="${HOME}/.config/gtk-3.0/settings.ini"
+
+	[[ ! -e "${marker}" ]] || return 0
+
+	current_theme="$(
+		xfconf-query --channel xsettings --property /Net/ThemeName \
+			2>/dev/null || true
+	)"
+	case "${current_theme}" in
+	"" | Adwaita-dark | Arc-Dark)
+		note "Migrating WebOS to its universal Arc-Dark GTK theme"
+		set_xfconf xsettings /Net/ThemeName string Arc-Dark
+		# Change the first-frame seed only when it is byte-for-byte the file
+		# WebOS generated previously. Preserve every administrator/user edit.
+		if cmp -s "${settings_file}" <(
+			printf '%s\n' \
+				'[Settings]' \
+				'gtk-theme-name=Adwaita-dark' \
+				'gtk-icon-theme-name=Papirus-Dark' \
+				'gtk-cursor-theme-name=breeze_cursors'
+		); then
+			sed -i 's/^gtk-theme-name=Adwaita-dark$/gtk-theme-name=Arc-Dark/' \
+				"${settings_file}"
+		fi
+		;;
+	*)
+		note "Preserving the user-selected GTK theme: ${current_theme}"
+		;;
+	esac
+
+	install -d -m 0700 "${profile_dir}"
+	touch "${marker}"
+}
+
+apply_dark_preference_v13() {
+	local profile_dir marker
+	profile_dir="${HOME}/.config/hoster-webos"
+	marker="${profile_dir}/dark-preference-v13"
+
+	[[ ! -e "${marker}" ]] || return 0
+
+	# GTK4/libadwaita applications such as current gedit use the standard
+	# desktop color-scheme preference rather than XFCE's GTK3 theme name.
+	# Seed it once, leaving subsequent user changes alone.
+	if command -v gsettings >/dev/null 2>&1 &&
+		gsettings set org.gnome.desktop.interface color-scheme prefer-dark; then
+		install -d -m 0700 "${profile_dir}"
+		touch "${marker}"
+	else
+		note "Could not initialize the GTK4 dark color-scheme preference"
+	fi
+}
+
+apply_terminal_background_v14() {
+	local profile_dir marker distro_id darkness
+	profile_dir="${HOME}/.config/hoster-webos"
+	marker="${profile_dir}/terminal-background-v14"
+
+	[[ ! -e "${marker}" ]] || return 0
+
+	distro_id="$(. /etc/os-release; printf '%s' "${ID:-}")"
+	case "${distro_id}" in
+	ubuntu)
+		# Ubuntu's XFCE Terminal builds need one additional opacity point to
+		# visually match the newer Fedora build.
+		darkness="0.930000"
+		;;
+	fedora)
+		darkness="0.920000"
+		;;
+	*)
+		note "Cannot select terminal opacity for unsupported distro: ${distro_id}"
+		return 0
+		;;
+	esac
+
+	note "Applying the WebOS transparent terminal background"
+	set_xfconf xfce4-terminal /background-mode string \
+		TERMINAL_BACKGROUND_TRANSPARENT
+	set_xfconf xfce4-terminal /background-darkness double "${darkness}"
+
+	install -d -m 0700 "${profile_dir}"
+	touch "${marker}"
+}
+
+set_xfconf_int_array() {
+	local channel="${1}" property="${2}" value
+	local -a command=(
+		xfconf-query --channel "${channel}" --property "${property}"
+		--force-array
+	)
+	shift 2
+	for value in "$@"; do
+		command+=(--type int --set "${value}")
+	done
+	"${command[@]}"
+}
+
+apply_initial_appearance() {
+	local appearance_dir marker wallpaper property style_property output workspace
+	local -a backdrop_properties=()
+	local -a outputs=(WL-1 Virtual-1 XWAYLAND0 0)
+	appearance_dir="${HOME}/.config/hoster-webos"
+	marker="${appearance_dir}/appearance-v4"
+	wallpaper="/opt/hoster/webos/current/share/backgrounds/webos-wallpaper.jpg"
+
+	[[ ! -e "${marker}" ]] || return 0
+	[[ -r "${wallpaper}" ]] || {
+		note "Wallpaper is missing; appearance defaults were not applied"
+		return 0
+	}
+
+	note "Applying the initial WebOS dark appearance and wallpaper"
+	set_xfconf xsettings /Net/ThemeName string "${WEBOS_DEFAULT_GTK_THEME}"
+	set_xfconf xsettings /Gtk/CursorThemeName string Adwaita
+	set_xfconf xsettings /Gtk/CursorThemeSize int 24
+
+	while IFS= read -r property; do
+		[[ "${property}" == */last-image ]] && backdrop_properties+=("${property}")
+	done < <(xfconf-query --channel xfce4-desktop --list 2>/dev/null || true)
+	# Always include the predictable Labwc and Xwayland output names. This also
+	# repairs older alpha configurations that only contained one output type.
+	for output in "${outputs[@]}"; do
+		for workspace in 0 1 2 3; do
+			backdrop_properties+=(
+				"/backdrop/screen0/monitor${output}/workspace${workspace}/last-image"
+			)
+		done
+	done
+	for property in "${backdrop_properties[@]}"; do
+		set_xfconf xfce4-desktop "${property}" string "${wallpaper}"
+		style_property="${property%last-image}image-style"
+		set_xfconf xfce4-desktop "${style_property}" int 5
+	done
+	xfdesktop --reload >/dev/null 2>&1 || true
+
+	install -d -m 0700 "${appearance_dir}"
+	touch "${marker}"
+}
+
+apply_initial_desktop_profile() {
+	local appearance_dir marker property plugin
+	appearance_dir="${HOME}/.config/hoster-webos"
+	marker="${appearance_dir}/desktop-profile-v3"
+
+	[[ ! -e "${marker}" ]] || return 0
+
+	note "Applying the WebOS icon and tasklist defaults"
+	set_xfconf xsettings /Net/IconThemeName string Papirus-Dark
+
+	while IFS= read -r property; do
+		[[ "${property}" =~ ^/plugins/plugin-[0-9]+$ ]] || continue
+		plugin="$(xfconf-query --channel xfce4-panel \
+			--property "${property}" 2>/dev/null || true)"
+		[[ "${plugin}" == "tasklist" ]] || continue
+
+		set_xfconf xfce4-panel \
+			"${property}/include-all-workspaces" bool true
+		# XFCE 4.18 reads the boolean property. Newer panel releases migrate
+		# it to the string selector and use that as the source of truth.
+		set_xfconf xfce4-panel \
+			"${property}/include-all-monitors" bool true
+		set_xfconf xfce4-panel \
+			"${property}/monitors-to-include" string all
+	done < <(xfconf-query --channel xfce4-panel --list 2>/dev/null || true)
+
+	install -d -m 0700 "${appearance_dir}"
+	touch "${marker}"
+}
+
+apply_desktop_profile_v2() {
+	local appearance_dir marker property plugin plugin_id panel_id position value
+	local -a panel_ids=() kept_panel_ids=() plugin_ids=() kept_plugin_ids=()
+	appearance_dir="${HOME}/.config/hoster-webos"
+	marker="${appearance_dir}/desktop-profile-v5"
+
+	[[ ! -e "${marker}" ]] || return 0
+
+	note "Applying the streamlined WebOS panel, menu, and cursor defaults"
+	set_xfconf xsettings /Gtk/CursorThemeName string breeze_cursors
+	set_xfconf xsettings /Gtk/CursorThemeSize int 24
+
+	# Remove the secondary bottom dock while preserving any other custom panel.
+	mapfile -t panel_ids < <(
+		xfconf-query --channel xfce4-panel --property /panels 2>/dev/null |
+			sed -n '/^[0-9][0-9]*$/p' || true
+	)
+	for panel_id in "${panel_ids[@]}"; do
+		[[ "${panel_id}" =~ ^[0-9]+$ ]] || continue
+		position="$(xfconf-query --channel xfce4-panel \
+			--property "/panels/panel-${panel_id}/position" 2>/dev/null || true)"
+		if [[ "${panel_id}" != "1" && "${position}" == p=10* ]]; then
+			mapfile -t plugin_ids < <(
+				xfconf-query --channel xfce4-panel \
+					--property "/panels/panel-${panel_id}/plugin-ids" \
+					2>/dev/null | sed -n '/^[0-9][0-9]*$/p' || true
+			)
+			for plugin_id in "${plugin_ids[@]}"; do
+				[[ "${plugin_id}" =~ ^[0-9]+$ ]] || continue
+				xfconf-query --channel xfce4-panel \
+					--property "/plugins/plugin-${plugin_id}" \
+					--reset --recursive 2>/dev/null || true
+			done
+			xfconf-query --channel xfce4-panel \
+				--property "/panels/panel-${panel_id}" \
+				--reset --recursive 2>/dev/null || true
+		else
+			kept_panel_ids+=("${panel_id}")
+		fi
+	done
+	if [[ "${#kept_panel_ids[@]}" -gt 0 &&
+		"${#kept_panel_ids[@]}" -ne "${#panel_ids[@]}" ]]; then
+		set_xfconf_int_array xfce4-panel /panels "${kept_panel_ids[@]}"
+	fi
+
+	# Replace XFCE's basic Applications Menu with the searchable Whisker Menu
+	# and remove every pager plugin from whichever retained panel owns it.
+	while IFS= read -r property; do
+		[[ "${property}" =~ ^/plugins/plugin-([0-9]+)$ ]] || continue
+		plugin_id="${BASH_REMATCH[1]}"
+		plugin="$(xfconf-query --channel xfce4-panel \
+			--property "${property}" 2>/dev/null || true)"
+		case "${plugin}" in
+		applicationsmenu)
+			set_xfconf xfce4-panel \
+				"${property}" string whiskermenu
+			set_xfconf xfce4-panel \
+				"${property}/button-icon" string org.xfce.panel.whiskermenu
+			set_xfconf xfce4-panel \
+				"${property}/show-button-title" bool false
+			;;
+		whiskermenu)
+			set_xfconf xfce4-panel \
+				"${property}/button-icon" string org.xfce.panel.whiskermenu
+			set_xfconf xfce4-panel \
+				"${property}/show-button-title" bool false
+			;;
+		pager)
+			for panel_id in "${kept_panel_ids[@]}"; do
+				mapfile -t plugin_ids < <(
+					xfconf-query --channel xfce4-panel \
+						--property "/panels/panel-${panel_id}/plugin-ids" \
+						2>/dev/null |
+						sed -n '/^[0-9][0-9]*$/p' || true
+				)
+				kept_plugin_ids=()
+				for value in "${plugin_ids[@]}"; do
+					[[ "${value}" == "${plugin_id}" ]] ||
+						kept_plugin_ids+=("${value}")
+				done
+				if [[ "${#kept_plugin_ids[@]}" -ne "${#plugin_ids[@]}" ]]; then
+					set_xfconf_int_array xfce4-panel \
+						"/panels/panel-${panel_id}/plugin-ids" \
+						"${kept_plugin_ids[@]}"
+				fi
+			done
+			xfconf-query --channel xfce4-panel --property "${property}" \
+				--reset --recursive 2>/dev/null || true
+			;;
+		esac
+	done < <(xfconf-query --channel xfce4-panel --list 2>/dev/null || true)
+
+	install -d -m 0700 "${appearance_dir}"
+	touch "${marker}"
+	# The panel observes xfconf changes itself. Restarting it here races XFCE's
+	# first-launch ownership check and can leave no panel on newer XFCE builds.
+}
+
+apply_panel_profile_v6() {
+	local appearance_dir marker property plugin plugin_id whisker_id=""
+	local max_plugin_id=0 next_plugin_id time_clock_id="" date_clock_id=""
+	local between_separator_id="" first_clock_index=-1 inserted=false id index
+	local -a panel_ids=() clock_ids=() action_ids=() extra_clock_ids=()
+	local -a final_ids=()
+	declare -A plugin_types=()
+
+	appearance_dir="${HOME}/.config/hoster-webos"
+	marker="${appearance_dir}/panel-profile-v6"
+	[[ ! -e "${marker}" ]] || return 0
+
+	note "Applying the polished WebOS panel layout"
+	set_xfconf xfce4-panel /panels/panel-1/size uint 27
+	set_xfconf xfce4-panel /panels/panel-1/icon-size uint 25
+
+	mapfile -t panel_ids < <(
+		xfconf-query --channel xfce4-panel \
+			--property /panels/panel-1/plugin-ids 2>/dev/null |
+			sed -n '/^[0-9][0-9]*$/p' || true
+	)
+
+	# Include orphaned launcher properties when allocating new IDs so an
+	# existing per-user panel customization can never be overwritten.
+	while IFS= read -r property; do
+		if [[ "${property}" =~ ^/plugins/plugin-([0-9]+)($|/) ]]; then
+			plugin_id="${BASH_REMATCH[1]}"
+			(( plugin_id > max_plugin_id )) && max_plugin_id="${plugin_id}"
+		fi
+	done < <(xfconf-query --channel xfce4-panel --list 2>/dev/null || true)
+	next_plugin_id=$((max_plugin_id + 1))
+
+	for index in "${!panel_ids[@]}"; do
+		id="${panel_ids[index]}"
+		plugin="$(xfconf-query --channel xfce4-panel \
+			--property "/plugins/plugin-${id}" 2>/dev/null || true)"
+		plugin_types["${id}"]="${plugin}"
+		case "${plugin}" in
+		whiskermenu)
+			[[ -n "${whisker_id}" ]] || whisker_id="${id}"
+			;;
+		clock)
+			[[ "${first_clock_index}" -ge 0 ]] ||
+				first_clock_index="${index}"
+			clock_ids+=("${id}")
+			;;
+		actions)
+			action_ids+=("${id}")
+			;;
+		esac
+	done
+
+	if [[ -n "${whisker_id}" ]]; then
+		property="/plugins/plugin-${whisker_id}"
+		set_xfconf xfce4-panel "${property}/show-menu-icons" bool true
+		set_xfconf xfce4-panel "${property}/button-icon" string \
+			/opt/hoster/webos/current/share/icons/webos-whisker.png
+		set_xfconf xfce4-panel "${property}/show-button-title" bool true
+		set_xfconf xfce4-panel "${property}/button-title" string Apps
+		set_xfconf xfce4-panel "${property}/button-single-row" bool false
+		set_xfconf xfce4-panel "${property}/launcher-icon-size" int 1
+		set_xfconf xfce4-panel "${property}/category-icon-size" int 2
+		set_xfconf xfce4-panel "${property}/launcher-show-name" bool true
+		set_xfconf xfce4-panel "${property}/view-mode" int 1
+	fi
+
+	case "${#clock_ids[@]}" in
+	0)
+		time_clock_id="${next_plugin_id}"
+		next_plugin_id=$((next_plugin_id + 1))
+		date_clock_id="${next_plugin_id}"
+		next_plugin_id=$((next_plugin_id + 1))
+		;;
+	1)
+		time_clock_id="${next_plugin_id}"
+		next_plugin_id=$((next_plugin_id + 1))
+		date_clock_id="${clock_ids[0]}"
+		;;
+	*)
+		time_clock_id="${clock_ids[0]}"
+		date_clock_id="${clock_ids[1]}"
+		extra_clock_ids=("${clock_ids[@]:2}")
+		;;
+	esac
+
+	# Reuse the existing transparent separator after the original clock where
+	# possible. The user-approved Fedora layout already has it between its two
+	# clocks; untouched distro defaults place it immediately after their single
+	# clock.
+	if [[ "${#clock_ids[@]}" -ge 2 ]]; then
+		for (( index=first_clock_index + 1;
+			index<${#panel_ids[@]};
+			index++ )); do
+			id="${panel_ids[index]}"
+			[[ "${id}" == "${date_clock_id}" ]] && break
+			if [[ "${plugin_types[${id}]:-}" == separator ]]; then
+				between_separator_id="${id}"
+				break
+			fi
+		done
+	elif [[ "${#clock_ids[@]}" -eq 1 &&
+		$((first_clock_index + 1)) -lt "${#panel_ids[@]}" ]]; then
+		id="${panel_ids[first_clock_index + 1]}"
+		[[ "${plugin_types[${id}]:-}" == separator ]] &&
+			between_separator_id="${id}"
+	fi
+	if [[ -z "${between_separator_id}" ]]; then
+		between_separator_id="${next_plugin_id}"
+		next_plugin_id=$((next_plugin_id + 1))
+	fi
+
+	property="/plugins/plugin-${between_separator_id}"
+	set_xfconf xfce4-panel "${property}" string separator
+	set_xfconf xfce4-panel "${property}/style" uint 0
+	set_xfconf xfce4-panel "${property}/expand" bool false
+
+	property="/plugins/plugin-${time_clock_id}"
+	set_xfconf xfce4-panel "${property}" string clock
+	set_xfconf xfce4-panel "${property}/mode" uint 2
+	set_xfconf xfce4-panel "${property}/digital-layout" uint 3
+	set_xfconf xfce4-panel "${property}/command" string true
+
+	property="/plugins/plugin-${date_clock_id}"
+	set_xfconf xfce4-panel "${property}" string clock
+	set_xfconf xfce4-panel "${property}/digital-layout" uint 2
+	xfconf-query --channel xfce4-panel \
+		--property "${property}/mode" --reset 2>/dev/null || true
+	xfconf-query --channel xfce4-panel \
+		--property "${property}/command" --reset 2>/dev/null || true
+
+	# Replace the first clock position with the canonical time/separator/date
+	# cluster, remove the Action Buttons plugin, and preserve every unrelated
+	# plugin in its existing order.
+	for index in "${!panel_ids[@]}"; do
+		id="${panel_ids[index]}"
+		if [[ "${index}" -eq "${first_clock_index}" ]]; then
+			final_ids+=(
+				"${time_clock_id}"
+				"${between_separator_id}"
+				"${date_clock_id}"
+			)
+			inserted=true
+		fi
+		case "${plugin_types[${id}]:-}" in
+		actions|clock) continue ;;
+		esac
+		[[ "${id}" == "${between_separator_id}" ]] && continue
+		final_ids+=("${id}")
+	done
+	if [[ "${inserted}" == false ]]; then
+		final_ids+=(
+			"${time_clock_id}"
+			"${between_separator_id}"
+			"${date_clock_id}"
+		)
+	fi
+	set_xfconf_int_array xfce4-panel \
+		/panels/panel-1/plugin-ids "${final_ids[@]}"
+
+	for id in "${action_ids[@]}" "${extra_clock_ids[@]}"; do
+		[[ -n "${id}" ]] || continue
+		xfconf-query --channel xfce4-panel \
+			--property "/plugins/plugin-${id}" \
+			--reset --recursive 2>/dev/null || true
+	done
+
+	install -d -m 0700 "${appearance_dir}"
+	touch "${marker}"
+}
+
+apply_whisker_profile_v7() {
+	local appearance_dir marker property plugin
+
+	appearance_dir="${HOME}/.config/hoster-webos"
+	marker="${appearance_dir}/whisker-profile-v7"
+	[[ ! -e "${marker}" ]] || return 0
+
+	note "Applying the WebOS Whisker Menu defaults"
+	while IFS= read -r property; do
+		[[ "${property}" =~ ^/plugins/plugin-[0-9]+$ ]] || continue
+		plugin="$(xfconf-query --channel xfce4-panel \
+			--property "${property}" 2>/dev/null || true)"
+		[[ "${plugin}" == "whiskermenu" ]] || continue
+
+		# Prefer the specific application name over the generic desktop-entry
+		# description, and keep both application and category icons compact.
+		set_xfconf xfce4-panel "${property}/launcher-show-name" bool true
+		set_xfconf xfce4-panel "${property}/launcher-icon-size" int 1
+		set_xfconf xfce4-panel "${property}/category-icon-size" int 2
+		set_xfconf xfce4-panel "${property}/menu-width" int 550
+		set_xfconf xfce4-panel "${property}/menu-height" int 650
+		set_xfconf xfce4-panel "${property}/menu-opacity" int 95
+	done < <(xfconf-query --channel xfce4-panel --list 2>/dev/null || true)
+
+	install -d -m 0700 "${appearance_dir}"
+	touch "${marker}"
+}
+
+apply_terminal_profile_v8() {
+	local appearance_dir marker
+
+	appearance_dir="${HOME}/.config/hoster-webos"
+	marker="${appearance_dir}/terminal-profile-v8"
+	[[ ! -e "${marker}" ]] || return 0
+
+	note "Applying the WebOS terminal font defaults"
+	set_xfconf xfce4-terminal /font-use-system bool false
+	set_xfconf xfce4-terminal /font-name string "Noto Sans Mono 10.5"
+
+	install -d -m 0700 "${appearance_dir}"
+	touch "${marker}"
+}
+
+apply_interaction_profile_v9() {
+	local appearance_dir marker property plugin
+
+	appearance_dir="${HOME}/.config/hoster-webos"
+	marker="${appearance_dir}/interaction-profile-v9"
+	[[ ! -e "${marker}" ]] || return 0
+
+	note "Applying the WebOS terminal geometry and Window Buttons defaults"
+	set_xfconf xfce4-terminal /misc-default-geometry string "180x35"
+
+	while IFS= read -r property; do
+		[[ "${property}" =~ ^/plugins/plugin-[0-9]+$ ]] || continue
+		plugin="$(xfconf-query --channel xfce4-panel \
+			--property "${property}" 2>/dev/null || true)"
+		[[ "${plugin}" == tasklist ]] || continue
+
+		set_xfconf xfce4-panel "${property}/include-all-workspaces" bool true
+		set_xfconf xfce4-panel "${property}/include-all-monitors" bool true
+		set_xfconf xfce4-panel "${property}/monitors-to-include" string all
+		set_xfconf xfce4-panel "${property}/grouping" bool false
+		# XFCE uses value 4 for the preferences UI's "Sorting order: None".
+		set_xfconf xfce4-panel "${property}/sort-order" uint 4
+	done < <(xfconf-query --channel xfce4-panel --list 2>/dev/null || true)
+
+	install -d -m 0700 "${appearance_dir}"
+	touch "${marker}"
+}
+
+children=()
+cleanup() {
+	local child
+	for child in "${children[@]:-}"; do
+		kill "${child}" 2>/dev/null || true
+	done
+	wait 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+note "Starting XFCE desktop components on ${DISPLAY}"
+
+# XFCE 4.20's native Wayland settings daemon mirrors Xfconf appearance values
+# into the GTK settings backend. Seed the one-time defaults before applications
+# start so no GTK_THEME override is needed and Appearance remains authoritative.
+ensure_gtk_startup_settings
+prepare_native_appearance_profile
+migrate_arc_theme_v12
+apply_dark_preference_v13
+
+xfsettingsd --replace --disable-wm-check &
+children+=("$!")
+
+# Give the daemon a moment to publish the initial GTK settings before the first
+# desktop clients connect. The persistent Xfconf values remain the source of
+# truth and subsequent Appearance changes are applied live.
+sleep 0.5
+
+thunar --daemon &
+children+=("$!")
+
+# Ubuntu's XFCE 4.20 build provides a native Wayland xfdesktop, while Fedora
+# 44 currently ships the same release without that build option. Prefer the
+# native backend, then fall back to the rootless Xwayland client when the
+# binary exits during its startup probe. Keep this exception local to
+# xfdesktop: the panel and settings daemon need native Wayland integration.
+GDK_BACKEND=wayland xfdesktop --disable-wm-check &
+xfdesktop_pid="$!"
+children+=("${xfdesktop_pid}")
+sleep 0.5
+if ! kill -0 "${xfdesktop_pid}" 2>/dev/null; then
+	wait "${xfdesktop_pid}" 2>/dev/null || true
+	note "xfdesktop lacks native Wayland support; using Xwayland"
+	GDK_BACKEND=x11 xfdesktop --disable-wm-check &
+	children+=("$!")
+fi
+
+# Every supported payload provides a Wayland-aware XFCE 4.20 panel. Native
+# tasklist integration is required for reliable window enumeration and
+# minimize/restore actions under Labwc; an X11 panel sees only an incomplete
+# Xwayland compatibility view.
+GDK_BACKEND=wayland xfce4-panel --disable-wm-check &
+children+=("$!")
+
+# Present a useful first screen. XFCE itself owns any normal per-user settings
+# it creates; the installer never replaces files under the selected user's home.
+# XFCE creates its distribution defaults asynchronously on a first login.
+# Let the daemons settle before applying the one-time WebOS profile.
+sleep 3
+apply_initial_appearance
+apply_initial_desktop_profile
+apply_desktop_profile_v2
+apply_panel_profile_v6
+apply_whisker_profile_v7
+apply_terminal_profile_v8
+apply_interaction_profile_v9
+apply_terminal_background_v14
+xfce4-terminal &
+children+=("$!")
+
+wait

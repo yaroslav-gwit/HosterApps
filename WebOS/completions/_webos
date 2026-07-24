@@ -1,0 +1,65 @@
+#compdef webos
+
+local -a commands user_commands settings registered_users
+commands=(
+  'status:show service status and safe configuration'
+  'start:start the selected WebOS service'
+  'stop:stop the selected WebOS service'
+  'restart:restart the selected WebOS service'
+  'logs:read selected service logs'
+  'url:print the selected HTTPS URL'
+  'diagnostics:run service, TLS, listener, process, and Docker checks'
+  'version:print installed build metadata'
+  'config:show or change selected user configuration'
+  'user:manage the multi-user session registry'
+  'help:show help'
+)
+user_commands=(
+  'list:list registered sessions'
+  'add:register an existing Linux user'
+  'remove:remove one WebOS session'
+  'show:show safe per-user configuration'
+  'credentials:show browser credentials'
+  'set-default:set the default session'
+  'renew-certificate:replace a self-signed certificate'
+  'start:start one session'
+  'stop:stop one session'
+  'restart:restart one session'
+)
+settings=(title browser-user browser-password listen port encoder cpu debug resolution)
+registered_users=(${${(f)"$(find /etc/hoster/webos/users -maxdepth 1 -name '*.env' -printf '%f\n' 2>/dev/null)"}%.env})
+
+_arguments -C \
+  '(-u --user)'{-u,--user}'[select a registered user]:user:($registered_users)' \
+  '1:command:->command' \
+  '*::argument:->args'
+case "$state" in
+  command) _describe 'command' commands ;;
+  args)
+    case "$words[2]" in
+      logs) _arguments '--follow[follow logs]' '--lines[number of lines]:lines:' ;;
+      config)
+        if (( CURRENT == 3 )); then
+          _values 'config action' show edit set reset rotate-password
+        elif [[ "$words[3]" == set && CURRENT == 4 ]]; then
+          _values 'setting' $settings
+        elif [[ "$words[3]" == reset ]]; then
+          _values 'setting' title
+        elif [[ "$words[3]" == show ]]; then
+          _values 'option' --show-secrets
+        fi
+        ;;
+      user)
+        if (( CURRENT == 3 )); then
+          _describe 'user command' user_commands
+        elif [[ "$words[3]" == add && CURRENT == 4 ]]; then
+          _users
+        elif (( CURRENT == 4 )); then
+          _values 'registered user' $registered_users
+        elif [[ "$words[3]" == add ]]; then
+          _values 'option' --listen --port --title --browser-user --prompt-password
+        fi
+        ;;
+    esac
+    ;;
+esac

@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
+readonly CONFIG_DIR="/etc/hoster/webos"
+readonly DESKTOP_CONFIG="${CONFIG_DIR}/desktop"
+readonly SELKIES_PYTHON="/opt/hoster/webos/current/venv/bin/python"
+
+note() { printf '[%s] %s\n' "${SCRIPT_NAME}" "$*"; }
+die() { printf '[%s] Error: %s\n' "${SCRIPT_NAME}" "$*" >&2; exit 1; }
+
+: "${WEBOS_LISTEN:=127.0.0.1}"
+: "${WEBOS_PORT:=8081}"
+: "${WEBOS_AUTH_USER:=${USER}}"
+: "${WEBOS_AUTH_PASSWORD:?WEBOS_AUTH_PASSWORD is not configured}"
+: "${WEBOS_ENCODER:=h264enc-striped}"
+: "${WEBOS_USE_CPU:=true}"
+: "${WEBOS_INITIAL_WIDTH:=1280}"
+: "${WEBOS_INITIAL_HEIGHT:=720}"
+: "${WEBOS_DEBUG:=false}"
+: "${WEBOS_ENABLE_HTTPS:=true}"
+: "${WEBOS_HTTPS_CERT:?WEBOS_HTTPS_CERT is not configured}"
+: "${WEBOS_HTTPS_KEY:?WEBOS_HTTPS_KEY is not configured}"
+: "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}"
+
+[[ -x "${SELKIES_PYTHON}" ]] || die "Selkies Python environment is missing: ${SELKIES_PYTHON}"
+[[ -d "${DESKTOP_CONFIG}" ]] || die "Desktop configuration is missing: ${DESKTOP_CONFIG}"
+
+desktop_user="$(id -un)"
+desktop_home="$(getent passwd "${desktop_user}" | cut -d: -f6)"
+[[ -n "${desktop_home}" && -d "${desktop_home}" ]] ||
+	die "Desktop home does not exist for ${desktop_user}: ${desktop_home:-unknown}"
+[[ -x "${desktop_home}" && -w "${desktop_home}" ]] ||
+	die "Desktop home is not accessible to ${desktop_user}: ${desktop_home}"
+export HOME="${desktop_home}"
+export USER="${desktop_user}"
+export LOGNAME="${desktop_user}"
+: "${WEBOS_TITLE:=WebOS-$(hostname)-${desktop_user}}"
+
+[[ "${WEBOS_ENABLE_HTTPS}" == true ]] ||
+	die "HTTPS is mandatory for WebOS sessions"
+[[ -r "${WEBOS_HTTPS_CERT}" ]] ||
+	die "TLS certificate is not readable: ${WEBOS_HTTPS_CERT}"
+[[ -r "${WEBOS_HTTPS_KEY}" ]] ||
+	die "TLS private key is not readable: ${WEBOS_HTTPS_KEY}"
+
+mkdir -p "${HOME}/Desktop" "${HOME}/Downloads"
+chmod 0700 "${XDG_RUNTIME_DIR}"
+
+set -a
+# shellcheck source=/dev/null
+source "${DESKTOP_CONFIG}/environment"
+set +a
+
+export WLR_LIBINPUT_NO_DEVICES=1
+export WLR_RENDERER=pixman
+
+children=()
+cleanup() {
+	local child
+	for child in "${children[@]:-}"; do
+		kill "${child}" 2>/dev/null || true
+	done
+	wait 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+note "Starting Selkies on ${WEBOS_LISTEN}:${WEBOS_PORT}"
+rm -f \
+	"${XDG_RUNTIME_DIR}/wayland-0" "${XDG_RUNTIME_DIR}/wayland-0.lock" \
+	"${XDG_RUNTIME_DIR}/wayland-1" "${XDG_RUNTIME_DIR}/wayland-1.lock"
+
+# Selkies/pixelflux owns the outer capture compositor on wayland-1. Labwc then
+# runs as its full-screen nested client and exposes wayland-0 to XFCE. Starting
+# Selkies first is important so Labwc does not claim the capture socket.
+"${SELKIES_PYTHON}" -m selkies \
+	--addr "${WEBOS_LISTEN}" \
+	--port "${WEBOS_PORT}" \
+	--mode websockets \
+	--wayland true \
+	--wayland-socket-index 1 \
+	--app-wayland-display wayland-1 \
+	--encoder "${WEBOS_ENCODER}" \
+	--use-cpu "${WEBOS_USE_CPU}" \
+	--audio-enabled false \
+	--microphone-enabled false \
+	--gamepad-enabled false \
+	--second-screen false \
+	--enable-dual-mode false \
+	--enable-https true \
+	--https-cert "${WEBOS_HTTPS_CERT}" \
+	--https-key "${WEBOS_HTTPS_KEY}" \
+	--cert-reload-interval 60 \
+	--enable-basic-auth true \
+	--basic-auth-user "${WEBOS_AUTH_USER}" \
+	--basic-auth-password "${WEBOS_AUTH_PASSWORD}" \
+	--ui-title "${WEBOS_TITLE}" \
+	--ui-sidebar-show-apps false \
+	--use-browser-cursors false \
+	--file-manager-path "${HOME}/Downloads" \
+	--debug "${WEBOS_DEBUG}" &
+selkies_pid=$!
+children+=("${selkies_pid}")
+
+for _ in $(seq 1 100); do
+	[[ -S "${XDG_RUNTIME_DIR}/wayland-1" ]] && break
+	kill -0 "${selkies_pid}" 2>/dev/null ||
+		die "Selkies exited before creating its capture compositor"
+	sleep 0.05
+done
+[[ -S "${XDG_RUNTIME_DIR}/wayland-1" ]] ||
+	die "Timed out waiting for the Selkies capture compositor"
+
+note "Starting nested Labwc compositor and XFCE desktop"
+WAYLAND_DISPLAY=wayland-1 \
+WLR_BACKENDS=wayland \
+WLR_WL_OUTPUTS=1 \
+labwc --config-dir "${DESKTOP_CONFIG}" \
+	--startup "/opt/hoster/webos/current/bin/webos-xfce-session" &
+labwc_pid=$!
+children+=("${labwc_pid}")
+
+for _ in $(seq 1 100); do
+	[[ -S "${XDG_RUNTIME_DIR}/wayland-0" ]] && break
+	kill -0 "${labwc_pid}" 2>/dev/null ||
+		die "Labwc exited before creating its application compositor"
+	sleep 0.05
+done
+[[ -S "${XDG_RUNTIME_DIR}/wayland-0" ]] ||
+	die "Timed out waiting for the Labwc application compositor"
+
+set +e
+wait -n "${selkies_pid}" "${labwc_pid}"
+status=$?
+set -e
+die "Selkies or Labwc exited unexpectedly (status ${status})"

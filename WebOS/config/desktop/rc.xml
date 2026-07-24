@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<labwc_config>
+  <core>
+    <decoration>server</decoration>
+    <gap>4</gap>
+    <autoEnableOutputs>yes</autoEnableOutputs>
+    <xwaylandPersistence>yes</xwaylandPersistence>
+  </core>
+  <theme>
+    <name>Adwaita</name>
+    <cornerRadius>6</cornerRadius>
+    <font place="ActiveWindow"><name>sans</name><size>10</size></font>
+    <font place="MenuItem"><name>sans</name><size>10</size></font>
+  </theme>
+  <desktops number="4" popupTime="800" />
+  <keyboard>
+    <default />
+    <keybind key="W-Return">
+      <action name="Execute"><command>xfce4-terminal</command></action>
+    </keybind>
+    <keybind key="W-e">
+      <action name="Execute"><command>thunar</command></action>
+    </keybind>
+    <keybind key="C-A-Left">
+      <action name="GoToDesktop" to="left" wrap="yes" />
+    </keybind>
+    <keybind key="C-A-Right">
+      <action name="GoToDesktop" to="right" wrap="yes" />
+    </keybind>
+    <keybind key="C-A-S-Left">
+      <action name="SendToDesktop" to="left" wrap="yes" />
+    </keybind>
+    <keybind key="C-A-S-Right">
+      <action name="SendToDesktop" to="right" wrap="yes" />
+    </keybind>
+    <keybind key="A-F4"><action name="Close" /></keybind>
+  </keyboard>
+  <mouse>
+    <default />
+  </mouse>
+  <windowRules>
+    <windowRule
+      identifier="xfdesktop"
+      type="desktop"
+      skipTaskbar="yes"
+      skipWindowSwitcher="yes"
+      ignoreFocusRequest="yes">
+      <action name="ToggleAlwaysOnBottom" />
+    </windowRule>
+    <windowRule
+      identifier="xfce4-panel"
+      type="dock"
+      skipTaskbar="yes"
+      skipWindowSwitcher="yes">
+      <action name="ToggleAlwaysOnTop" />
+    </windowRule>
+  </windowRules>
+</labwc_config>

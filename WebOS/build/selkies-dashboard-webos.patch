@@ -1,0 +1,149 @@
+diff --git a/addons/selkies-dashboard/index.html b/addons/selkies-dashboard/index.html
+--- a/addons/selkies-dashboard/index.html
++++ b/addons/selkies-dashboard/index.html
+@@ -8,6 +8,7 @@
+ <html lang="en">
+   <head>
+     <meta charset="utf-8">
++    <title>WebOS</title>
+     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+     <meta name="mobile-web-app-capable" content="yes">
+     <meta name="apple-mobile-web-app-capable" content="yes">
+diff --git a/addons/selkies-dashboard/public/manifest.json b/addons/selkies-dashboard/public/manifest.json
+--- a/addons/selkies-dashboard/public/manifest.json
++++ b/addons/selkies-dashboard/public/manifest.json
+@@ -1,6 +1,6 @@
+ {
+-  "name": "Selkies",
+-  "short_name": "Selkies",
++  "name": "WebOS",
++  "short_name": "WebOS",
+   "display": "fullscreen",
+   "start_url": ".",
+   "background_color": "#000000",
+diff --git a/addons/selkies-dashboard/src/components/Sidebar.jsx b/addons/selkies-dashboard/src/components/Sidebar.jsx
+--- a/addons/selkies-dashboard/src/components/Sidebar.jsx
++++ b/addons/selkies-dashboard/src/components/Sidebar.jsx
+@@ -752,6 +752,10 @@
+   const [uiTitle, setUiTitle] = useState('Selkies');
+   const [uiShowLogo, setUiShowLogo] = useState(true);
+-
++
++  useEffect(() => {
++    document.title = uiTitle;
++  }, [uiTitle]);
++
+   useEffect(() => {
+     const handleMessage = (event) => {
+       if (
+@@ -2640,22 +2644,25 @@
+       })()}
+       <div className={sidebarClasses}>
+           <div className="sidebar-header">
+-            {uiShowLogo && (
++            <div className="sidebar-brand-row">
++              {uiShowLogo && (
++                <a
++                  href="https://github.com/selkies-project/selkies"
++                  target="_blank"
++                  rel="noopener noreferrer"
++                >
++                  <SelkiesLogo width={30} height={30} t={t} />
++                </a>
++              )}
+               <a
+                 href="https://github.com/selkies-project/selkies"
+                 target="_blank"
+                 rel="noopener noreferrer"
++                title={uiTitle}
+               >
+-                <SelkiesLogo width={30} height={30} t={t} />
++                <h2>WebOS</h2>
+               </a>
+-            )}
+-            <a
+-              href="https://github.com/selkies-project/selkies"
+-              target="_blank"
+-              rel="noopener noreferrer"
+-            >
+-              <h2>{uiTitle}</h2>
+-            </a>
++            </div>
+             <div className="header-controls">
+             <div
+               className={`theme-toggle ${theme}`}
+diff --git a/addons/selkies-dashboard/src/styles/Overlay.css b/addons/selkies-dashboard/src/styles/Overlay.css
+--- a/addons/selkies-dashboard/src/styles/Overlay.css
++++ b/addons/selkies-dashboard/src/styles/Overlay.css
+@@ -120,17 +120,30 @@
+ /* Styles for the header section of the sidebar. */
+ .sidebar-header {
+     display: flex;
+-    justify-content: space-between;
+-    align-items: center;
++    flex-direction: column;
++    align-items: stretch;
++    gap: 10px;
+     margin-bottom: 20px;
+     padding-bottom: 10px;
+     border-bottom: 1px solid var(--sidebar-border);
+ }
+-
++
++.sidebar-brand-row {
++    display: flex;
++    align-items: center;
++    gap: 10px;
++    min-width: 0;
++}
++
++.sidebar-brand-row h2 {
++    white-space: nowrap;
++}
++
+ /* Container for header control buttons like theme toggle and fullscreen. */
+ .header-controls {
+     display: flex;
+     align-items: center;
++    justify-content: flex-end;
+     gap: 10px;
+ }
+
+diff --git a/addons/selkies-web-core/lib/input.js b/addons/selkies-web-core/lib/input.js
+--- a/addons/selkies-web-core/lib/input.js
++++ b/addons/selkies-web-core/lib/input.js
+@@ -1177,6 +1177,7 @@ export class Input {
+         document.body.appendChild(this.cursorDiv);
+         this.cursorHotspot = { x: 0, y: 0 };
+         this._cursorImageBitmap = null;
++        this._cursorUpdateGeneration = 0;
+         this._rawHotspotX = 0;
+         this._rawHotspotY = 0;
+         this.use_browser_cursors = false;
+@@ -1376,6 +1377,7 @@ export class Input {
+     }
+-
++
+     async updateServerCursor(cursorData) {
++        const updateGeneration = ++this._cursorUpdateGeneration;
+         if (!cursorData.curdata ||
+             parseInt(cursorData.handle, 10) === 0 ||
+             this._trackpadMode)
+@@ -1400,7 +1402,16 @@ export class Input {
+             this._updateBrowserCursor();
+         } else {
+-            this._cursorImageBitmap = await this._cursorBitmapFromBase64(this._cursorBase64Data);
++            const bitmap = await this._cursorBitmapFromBase64(cursorData.curdata);
++            // Cursor PNG decoding is asynchronous. A slower, older hand cursor
++            // must never overwrite a newer arrow cursor after a rapid surface
++            // transition.
++            if (updateGeneration !== this._cursorUpdateGeneration) {
++                if (typeof bitmap.close === 'function') bitmap.close();
++                return;
++            }
++            if (this._cursorImageBitmap && typeof this._cursorImageBitmap.close === 'function') this._cursorImageBitmap.close();
++            this._cursorImageBitmap = bitmap;
+             this.element.style.setProperty('cursor', 'none', 'important');
+             this.cursorDiv.style.display = 'block';
+             this._drawAndScaleCursor();
+         }

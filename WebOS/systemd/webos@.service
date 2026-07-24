@@ -1,0 +1,46 @@
+[Unit]
+Description=WebOS browser desktop for %I
+Documentation=https://github.com/yaroslav-gwit/HosterApps
+After=network-online.target systemd-user-sessions.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%I
+EnvironmentFile=-/etc/hoster/webos/defaults.env
+EnvironmentFile=/etc/hoster/webos/users/%i.env
+Environment=XDG_RUNTIME_DIR=/run/hoster-webos-%i
+RuntimeDirectory=hoster-webos-%i
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=restart
+WorkingDirectory=/var/lib/hoster/webos
+ExecStart=/usr/bin/dbus-run-session -- /opt/hoster/webos/current/bin/webos-session
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=90
+TimeoutStopSec=20
+KillMode=mixed
+UMask=0077
+
+# Do not open a PAM login session here. systemd-logind moves PAM session
+# descendants into a separate session scope, which lets the compositor and
+# Selkies survive a service restart and retain the listening port. Keeping the
+# complete desktop process tree in this unit's cgroup makes restart/upgrade
+# cleanup reliable.
+
+# The desktop is intentionally a full user session, so ProtectHome,
+# ProtectSystem and NoNewPrivileges cannot be enabled here.
+PrivateTmp=yes
+PrivateDevices=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=webos-%i
+
+[Install]
+WantedBy=multi-user.target

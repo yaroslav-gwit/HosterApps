@@ -1,0 +1,18 @@
+# WebOS dark Labwc decorations. Administrators may edit or remove this file.
+window.active.title.bg.color: #23232b
+window.active.label.text.color: #f4f4f5
+window.inactive.title.bg.color: #17171d
+window.inactive.label.text.color: #a1a1aa
+window.active.button.unpressed.image.color: #e4e4e7
+window.inactive.button.unpressed.image.color: #71717a
+window.handle.bg.color: #18181b
+window.active.border.color: #3f3f46
+window.inactive.border.color: #27272a
+menu.items.bg.color: #18181b
+menu.items.text.color: #f4f4f5
+menu.items.active.bg.color: #4c1d95
+menu.items.active.text.color: #ffffff
+menu.title.bg.color: #27272a
+menu.title.text.color: #f4f4f5
+osd.bg.color: #18181b
+osd.label.text.color: #f4f4f5

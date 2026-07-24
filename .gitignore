@@ -2,3 +2,5 @@ SaunaFS/dist
 QEMU/dist
 Caddy/dist
 CloudHypervisor/dist
+WebOS/dist/*
+!WebOS/dist/.gitkeep
