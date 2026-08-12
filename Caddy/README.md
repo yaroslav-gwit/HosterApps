@@ -1,20 +1,22 @@
 # Caddy `.run` Builder
 
-A Docker-based build wrapper that compiles Caddy with the **Cloudflare DNS** and
-**SSH** modules into a single self-extracting `.run` installer. The installer is
-portable across Linux distributions — Caddy is a statically linked Go binary.
+A Docker-based build wrapper that compiles Caddy with the **Cloudflare DNS**
+module into a single self-extracting `.run` installer. The installer is portable
+across Linux distributions — Caddy is a statically linked Go binary.
 
 ## Version
 
 The bundled Docker build currently targets:
 
 ```text
-Caddy      v2.9.1
-xcaddy     v0.4.4
+Caddy                  v2.11.4
+xcaddy                 v0.4.5
+caddy-dns/cloudflare   v0.2.4
 ```
 
-These are pinned in the `Dockerfile` via `ENV` directives. To bump versions,
-update those lines and rebuild.
+These are pinned in the `Dockerfile` via build arguments. To test another
+version without editing the file, pass the corresponding `--build-arg` to
+`docker build`.
 
 ## What gets built
 
@@ -22,7 +24,6 @@ update those lines and rebuild.
 |-------------------|-----------------------------------------------|----------------------------------|
 | Caddy             | https://github.com/caddyserver/caddy          | Reverse proxy / web server       |
 | caddy-dns/cloudflare | https://github.com/caddy-dns/cloudflare    | Cloudflare DNS-01 ACME challenge |
-| caddy-ssh         | https://github.com/mohammed90/caddy-ssh       | SSH server module                |
 
 ## Build the installer artifact
 

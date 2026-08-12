@@ -1,12 +1,16 @@
 FROM golang:1.25 AS build
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG CADDY_VERSION=v2.11.4
+ARG XCADDY_VERSION=v0.4.5
+ARG CLOUDFLARE_MODULE_VERSION=v0.2.4
 
 # ---------------------------------------------------------------------------
 # Version pins — update these to bump the build.
 # ---------------------------------------------------------------------------
-ENV CADDY_VERSION=v2.11.2
-ENV XCADDY_VERSION=v0.4.5
+ENV CADDY_VERSION=${CADDY_VERSION}
+ENV XCADDY_VERSION=${XCADDY_VERSION}
+ENV CLOUDFLARE_MODULE_VERSION=${CLOUDFLARE_MODULE_VERSION}
 
 # ---------------------------------------------------------------------------
 # Install xcaddy
@@ -15,7 +19,7 @@ RUN set -eux; \
     go install github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}
 
 # ---------------------------------------------------------------------------
-# Build Caddy with Cloudflare DNS and SSH modules
+# Build Caddy with the Cloudflare DNS module
 # ---------------------------------------------------------------------------
 WORKDIR /build
 
@@ -25,9 +29,9 @@ WORKDIR /build
 
 RUN set -eux; \
     xcaddy build ${CADDY_VERSION} \
-        --with github.com/caddy-dns/cloudflare; \
+        --with github.com/caddy-dns/cloudflare@${CLOUDFLARE_MODULE_VERSION}; \
     ./caddy version; \
-    ./caddy list-modules | grep -E 'cloudflare' || true
+    ./caddy list-modules | grep -Fx 'dns.providers.cloudflare'
 
 # ---------------------------------------------------------------------------
 # Create the self-extracting installer

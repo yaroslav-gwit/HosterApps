@@ -4,7 +4,7 @@ set -euo pipefail
 
 # Creates a self-extracting .run installer from a pre-built Caddy binary.
 # The resulting file can be copied to another Linux host and run as root to
-# install Caddy with Cloudflare DNS and SSH modules.
+# install Caddy with the Cloudflare DNS module.
 
 readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly CADDY_BINARY="${CADDY_BINARY:-/build/caddy}"
