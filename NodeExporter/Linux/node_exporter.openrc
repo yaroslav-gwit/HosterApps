@@ -1,0 +1,31 @@
+#!/sbin/openrc-run
+# shellcheck shell=sh disable=SC2034
+
+name="Prometheus Node Exporter"
+description="Prometheus exporter for machine metrics"
+supervisor="supervise-daemon"
+
+command="/usr/bin/node_exporter"
+command_args="${NODE_EXPORTER_ARGS:-}"
+command_background="yes"
+user="node_exporter"
+group="node_exporter"
+
+logdir="/var/log/node_exporter"
+logfile="${logdir}/${RC_SVCNAME}.log"
+pidfile="/run/${RC_SVCNAME}.pid"
+start_stop_daemon_args="--stdout ${logfile} --stderr ${logfile} --user ${user} --group ${group}"
+
+respawn_delay=5
+respawn_max=5
+respawn_period=60
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	checkpath --directory --owner "${user}:${group}" --mode 0755 "${logdir}"
+	checkpath --file --owner "${user}:${group}" --mode 0644 "${logfile}"
+}

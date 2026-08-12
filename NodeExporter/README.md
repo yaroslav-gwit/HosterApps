@@ -27,18 +27,25 @@ On RHEL-based systems:
 sudo dnf install -y jq wget curl bash
 ```
 
+On Alpine Linux:
+
+```shell
+sudo apk add bash curl jq openrc wget
+```
+
 ### Use `root` user account
 
 Another requirement is to execute all scripts from under the `root` user, aka `sudo su -`.
 
 ## Deploy.sh
 
-`deploy.sh` automatically installs NodeExporter on (almost) any Linux distribution running under `systemd`.
-Tested on Debian 12, AlmaLinux 9 and AlmaLinux 8.
+`deploy.sh` automatically installs Node Exporter on Linux distributions using
+systemd or OpenRC. It installs the upstream release binary, creates an
+unprivileged `node_exporter` account, selects the matching service definition,
+enables it at boot and starts it. Tested distributions include Debian 12,
+AlmaLinux 8/9 and Alpine Linux 3.23.
 
-> **NOTE**  
-> deploy.sh only works on x64 systems for now.  
-> More architectures might be coming in the future (I just don't have any way of testing those in my environment).
+Supported architectures are x86-64, ARM64 and ARMv7.
 
 To start this deployment script you'll need to execute the below:
 
@@ -46,11 +53,46 @@ To start this deployment script you'll need to execute the below:
 curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/NodeExporter/Linux/deploy.sh | bash
 ```
 
-Hoster-specific deployment:
+For reproducible guest-image builds, pin a release and defer service startup:
+
+```shell
+curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/NodeExporter/Linux/deploy.sh \
+  | bash -s -- --version 1.12.1 --no-start
+```
+
+`--no-start` still enables the service for the next boot. Release archives are
+verified against the SHA-256 digest published in the GitHub release metadata.
+
+Hoster host deployment (systemd only):
 
 ```shell
 curl -sSL https://raw.githubusercontent.com/yaroslav-gwit/HosterApps/main/NodeExporter/Linux/deploy.sh | bash -s -- --hoster-collectors
 ```
+
+The Hoster collector allow-list is intentionally for systemd hypervisor hosts.
+It is ignored with a warning on OpenRC guests, which use Node Exporter's
+upstream default collectors.
+
+## Service management
+
+On systemd:
+
+```shell
+sudo systemctl status node_exporter
+sudo systemctl restart node_exporter
+sudo journalctl -u node_exporter -f
+```
+
+On Alpine/OpenRC:
+
+```shell
+sudo rc-service node_exporter status
+sudo rc-service node_exporter restart
+sudo tail -f /var/log/node_exporter/node_exporter.log
+```
+
+Additional OpenRC arguments can be set in `/etc/conf.d/node_exporter` through
+the `NODE_EXPORTER_ARGS` variable.
 
 ## Troubleshooting
 
