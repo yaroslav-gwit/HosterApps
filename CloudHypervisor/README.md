@@ -16,13 +16,14 @@ from source (Rust).
 The bundled Docker build currently targets:
 
 ```text
-Cloud Hypervisor   v51.1
-EDK2 firmware      ch-13b4963ec4  (rebased on edk2-stable202602)
-virtiofsd          v1.12.0
+Cloud Hypervisor   v53.0
+EDK2 firmware      ch-1e1b96f126
+virtiofsd          v1.14.0
 ```
 
-These are pinned in the `Dockerfile` via `ENV` directives. To bump versions,
-update those lines and rebuild.
+These versions, upstream checksums, and the virtiofsd release commit are pinned
+in the `Dockerfile` via build arguments. Every downloaded binary and firmware
+image is verified before it is packaged.
 
 ## What gets packaged
 
@@ -30,8 +31,8 @@ update those lines and rebuild.
 |-------------------|-----------------------------------------------------------|---------------------------------|
 | cloud-hypervisor  | Pre-built static binary from GitHub releases              | MicroVM hypervisor              |
 | ch-remote         | Pre-built static binary from GitHub releases              | Remote API client for CHV       |
-| CLOUDHV_EFI.fd    | Pre-built firmware from cloud-hypervisor/edk2 releases    | Full UEFI firmware for MicroVMs |
-| CLOUDHV.fd        | Pre-built firmware from cloud-hypervisor/edk2 releases    | Minimal firmware variant        |
+| CLOUDHV.fd        | Pre-built firmware from cloud-hypervisor/edk2 releases    | x86-64 UEFI firmware            |
+| CLOUDHV_EFI.fd    | Pre-built firmware from cloud-hypervisor/edk2 releases    | AArch64 UEFI firmware           |
 | virtiofsd         | Built from source (Rust)                                  | Virtio-FS vhost-user daemon     |
 
 ## Build the installer artifact
@@ -78,25 +79,27 @@ The installer places everything under a versioned directory:
 For example:
 
 ```
-/opt/hoster/cloud-hypervisor/51.1_2026-04-06/
+/opt/hoster/cloud-hypervisor/53.0_2026-08-12/
 ```
 
 ### Full tree
 
 ```
 /opt/hoster/cloud-hypervisor/
-├── 51.1_2026-04-06/                    ← versioned install
+├── 53.0_2026-08-12/                    ← versioned install
 │   ├── bin/
 │   │   ├── cloud-hypervisor             ← MicroVM hypervisor (static binary)
 │   │   ├── ch-remote                    ← Remote API client (static binary)
 │   │   └── virtiofsd                    ← Virtio-FS vhost-user daemon
 │   ├── firmware/
-│   │   ├── CLOUDHV_EFI.fd              ← Full UEFI firmware (primary)
-│   │   └── CLOUDHV.fd                  ← Minimal firmware variant
+│   │   ├── CLOUDHV_EFI.fd              ← AArch64 UEFI firmware
+│   │   └── CLOUDHV.fd                  ← x86-64 UEFI firmware
+│   ├── lib/                              ← private virtiofsd dependencies
+│   ├── licenses/                         ← bundled-library license notices
 │   └── build-info.txt                  ← version + build date metadata
-├── latest -> 51.1_2026-04-06/          ← symlink to most recent install
+├── latest -> 53.0_2026-08-12/          ← symlink to most recent install
 └── bin/                                 ← symlinks to latest version's binaries
-    ├── cloud-hypervisor -> ../51.1_2026-04-06/bin/cloud-hypervisor
+    ├── cloud-hypervisor -> ../latest/bin/cloud-hypervisor
     ├── ch-remote -> ...
     └── virtiofsd -> ...
 ```
@@ -152,7 +155,7 @@ calls (VM shutdown, etc.).
 /opt/hoster/cloud-hypervisor/latest/bin/ch-remote
 ```
 
-### 3. CLOUDHV_EFI.fd firmware path
+### 3. Cloud Hypervisor firmware path
 
 **Current code:** `HosterLib/microvm.go` lines 47–53
 
@@ -166,20 +169,26 @@ firmwareCandidates := []string{
 }
 ```
 
-**New approach:** Prepend the versioned firmware directory:
+The packaged Cloud Hypervisor binaries target x86-64, so the primary firmware
+must be `CLOUDHV.fd`. The existing candidate list above selects the AArch64
+firmware instead.
+
+**New approach:** Use the architecture-appropriate image from the versioned
+firmware directory (x86-64 example):
 
 ```go
-chvDir := resolvedChvVersionDir  // e.g. /opt/hoster/cloud-hypervisor/51.1_2026-04-06
+chvDir := resolvedChvVersionDir  // e.g. /opt/hoster/cloud-hypervisor/53.0_2026-08-12
 
 firmwareCandidates := []string{
-    filepath.Join(chvDir, "firmware", "CLOUDHV_EFI.fd"),  // bundled (preferred)
-    "/opt/hoster/firmware/CLOUDHV_EFI.fd",                // legacy symlink
-    "/opt/hoster/firmware/CLOUDHV_EFI",
-    "/usr/local/share/cloud-hypervisor/CLOUDHV_EFI.fd",
-    "/usr/share/cloud-hypervisor/CLOUDHV_EFI.fd",
+    filepath.Join(chvDir, "firmware", "CLOUDHV.fd"),  // bundled x86-64 image
+    "/opt/hoster/firmware/CLOUDHV.fd",                // legacy symlink
+    "/usr/local/share/cloud-hypervisor/CLOUDHV.fd",
+    "/usr/share/cloud-hypervisor/CLOUDHV.fd",
     "/opt/hoster/firmware/hypervisor-fw",
 }
 ```
+
+An AArch64 build should select `CLOUDHV_EFI.fd` instead.
 
 ### 4. virtiofsd resolution
 
@@ -270,7 +279,8 @@ Same as the QEMU installer — multiple versions can coexist:
 /opt/hoster/cloud-hypervisor/
 ├── 50.2_2025-12-01/
 ├── 51.1_2026-04-06/
-└── latest -> 51.1_2026-04-06/
+├── 53.0_2026-08-12/
+└── latest -> 53.0_2026-08-12/
 ```
 
 Rollback:
@@ -278,11 +288,24 @@ Rollback:
 ln -sfn /opt/hoster/cloud-hypervisor/50.2_2025-12-01 /opt/hoster/cloud-hypervisor/latest
 ```
 
+The convenience binaries and legacy firmware links resolve through `latest`,
+so changing that single symlink switches the complete Cloud Hypervisor
+toolchain. Only select a version directory that contains `bin/` and `firmware/`.
+
+Cloud Hypervisor snapshots and live migration streams are not compatible
+across major versions. Stop v51 guests and boot them afresh under v53; do not
+restore v51 snapshots with v53 or live-migrate directly between those versions.
+Disk image auto-detection is deprecated upstream, so new configurations should
+set `image_type` explicitly.
+
 ## Notes
 
 - Cloud Hypervisor and ch-remote are **static binaries** — no shared library
-  bundling is needed for them. Only virtiofsd has dynamic dependencies.
+  bundling is needed for them. Virtiofsd's non-glibc dependencies are bundled
+  privately under the versioned `lib/` directory and located through an
+  embedded relative runtime path; no global `ldconfig` changes are made.
 - The installer does **not** create systemd services — Cloud Hypervisor is
   invoked by Hoster via its API socket, not run as a standalone daemon.
-- The `CLOUDHV.fd` firmware is a minimal variant; `CLOUDHV_EFI.fd` is the full
-  UEFI firmware and is what HosterCoreLinux uses.
+- `CLOUDHV.fd` is the x86-64 UEFI image. `CLOUDHV_EFI.fd` is the AArch64 UEFI
+  image. The package retains both upstream images, but the bundled Cloud
+  Hypervisor executable targets x86-64.

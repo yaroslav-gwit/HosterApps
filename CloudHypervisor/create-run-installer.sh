@@ -30,13 +30,18 @@ trap cleanup EXIT
 PAYLOAD_DIR="${WORK_DIR}/payload"
 mkdir -p "${PAYLOAD_DIR}" "${OUTPUT_DIR}"
 
-# Copy binaries and firmware into the payload
-cp -a "${CHV_PREFIX}/bin"       "${PAYLOAD_DIR}/bin"
-cp -a "${CHV_PREFIX}/firmware"  "${PAYLOAD_DIR}/firmware"
+# Copy binaries, their private libraries, firmware, and license notices into
+# the payload.
+for dir in bin firmware lib licenses; do
+	cp -a "${CHV_PREFIX}/${dir}" "${PAYLOAD_DIR}/${dir}"
+done
 
 # Embed version metadata
 cat > "${PAYLOAD_DIR}/build-info.txt" <<EOF
 CHV_VERSION=${CHV_RAW_VERSION}
+CHV_EDK2_TAG=${CHV_EDK2_TAG:-unknown}
+VIRTIOFSD_VERSION=${VIRTIOFSD_VERSION:-unknown}
+VIRTIOFSD_COMMIT=${VIRTIOFSD_COMMIT:-unknown}
 BUILD_DATE=${BUILD_DATE}
 INSTALL_DIR_NAME=${CHV_RAW_VERSION}_${BUILD_DATE}
 EOF
