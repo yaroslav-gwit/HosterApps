@@ -13,14 +13,15 @@ repository.
 The bundled Docker build currently targets:
 
 ```text
-QEMU       10.2.2
-libtpms    v0.9.6
-swtpm      v0.9.0
-virtiofsd  v1.12.0
+QEMU       11.1.0
+libtpms    v0.10.2
+swtpm      v0.10.1
+virtiofsd  v1.14.0
 ```
 
-These are pinned in the `Dockerfile` via `ENV` directives. To bump versions,
-update those lines and rebuild.
+These are pinned in the `Dockerfile` as build arguments together with the QEMU
+source SHA-256 and exact companion-project Git commits. Update the pins and
+integrity values together when bumping versions.
 
 ## What gets built
 
@@ -77,14 +78,14 @@ The installer places everything under a versioned directory:
 For example:
 
 ```
-/opt/hoster/qemu/10.2.2_2026-04-05/
+/opt/hoster/qemu/11.1.0_2026-08-12/
 ```
 
 ### Full tree
 
 ```
 /opt/hoster/qemu/
-├── 10.2.2_2026-04-05/              ← versioned install
+├── 11.1.0_2026-08-12/              ← versioned install
 │   ├── bin/                         ← wrapper scripts (entry points)
 │   │   ├── qemu-system-x86_64      ← sets LD_LIBRARY_PATH, execs libexec/
 │   │   ├── qemu-img
@@ -115,11 +116,12 @@ For example:
 │   │   └── qemu/                    ← QEMU data (keymaps, device ROMs, etc.)
 │   ├── lib/
 │   │   └── bundled/                 ← shared libraries (private to QEMU)
-│   └── build-info.txt              ← version + build date metadata
-├── latest -> 10.2.2_2026-04-05/    ← symlink to most recent install
-└── bin/                             ← symlinks to latest version's wrapper scripts
-    ├── qemu-system-x86_64 -> ../10.2.2_2026-04-05/bin/qemu-system-x86_64
-    ├── qemu-img -> ...
+│   ├── licenses/                    ← source and bundled-library notices
+│   └── build-info.txt               ← versions, commits, source hash + build date
+├── latest -> 11.1.0_2026-08-12/    ← active complete installation tree
+└── bin/                             ← launchers that dispatch through latest/
+    ├── qemu-system-x86_64
+    ├── qemu-img
     └── ...
 ```
 
@@ -135,7 +137,8 @@ binaries like curl, openssl, etc.
 ```bash
 # Example: bin/qemu-system-x86_64
 #!/usr/bin/env bash
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SELF_DIR="$(cd "$(dirname "${SELF_PATH}")" && pwd)"
 LIB_DIR="${SELF_DIR}/../lib/bundled"
 if [[ -d "${LIB_DIR}" ]]; then
     export LD_LIBRARY_PATH="${LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -148,7 +151,7 @@ exec "${SELF_DIR}/../libexec/qemu-system-x86_64" "$@"
 | Path                                | Description                        |
 |-------------------------------------|------------------------------------|
 | `/opt/hoster/qemu/latest/`          | Symlink to newest version dir      |
-| `/opt/hoster/qemu/bin/`             | Symlinks to newest version binaries|
+| `/opt/hoster/qemu/bin/`             | Launchers for active version binaries|
 
 ---
 
@@ -172,16 +175,10 @@ if !WhichIsBinaryExists(qemuBinary) {
 **New approach:** Resolve the binary from `/opt/hoster/qemu/` instead of `$PATH`.
 
 ```
-# Preferred: scan /opt/hoster/qemu/ for the latest version directory
-#   1. List directories matching the pattern <version>_<date>
-#   2. Sort lexicographically (version-major sorts correctly)
-#   3. Pick the last entry
-#   4. Use <picked>/bin/qemu-system-x86_64
-
-# Fallback: use the convenience symlink
+# Preferred: use the installer-managed active-version symlink
 /opt/hoster/qemu/latest/bin/qemu-system-x86_64
 
-# Last resort: fall back to system PATH (current behavior)
+# Fallback: semver-sort directories matching <version>_<date>, then PATH
 ```
 
 ### 2. qemu-img resolution
@@ -298,41 +295,21 @@ build, these package lists can be trimmed:
 
 **Replace with:** Download the `.run` installer from the GitHub release and run it.
 
-### 8. Suggested helper function for Go code
+### 8. Suggested resolution for Go code
 
-A single Go helper to resolve the QEMU installation directory:
+A single helper should resolve the installer's atomic `latest` symlink first.
+Do not select version directories with a plain lexicographic sort: for example,
+`9.2.0` sorts after `11.1.0`. If `latest` is absent, use a semantic-version
+comparison before falling back to the system `PATH`.
 
 ```go
-// FindLatestQemuDir scans /opt/hoster/qemu/ for versioned directories
-// matching the pattern "<version>_<date>" and returns the path to the
-// latest one (lexicographic sort).
-//
-// Returns ("", error) if no installation is found.
 func FindLatestQemuDir() (string, error) {
-    base := "/opt/hoster/qemu"
-    entries, err := os.ReadDir(base)
+    latest := "/opt/hoster/qemu/latest"
+    target, err := filepath.EvalSymlinks(latest)
     if err != nil {
-        return "", fmt.Errorf("cannot read %s: %w", base, err)
+        return "", fmt.Errorf("cannot resolve %s: %w", latest, err)
     }
-
-    var candidates []string
-    for _, e := range entries {
-        if !e.IsDir() {
-            continue
-        }
-        // Match pattern: digits, dots, underscore, date
-        // e.g. "10.2.2_2026-04-05"
-        name := e.Name()
-        if len(name) > 0 && name[0] >= '0' && name[0] <= '9' && strings.Contains(name, "_") {
-            candidates = append(candidates, name)
-        }
-    }
-    if len(candidates) == 0 {
-        return "", fmt.Errorf("no QEMU installation found in %s", base)
-    }
-
-    sort.Strings(candidates)
-    return filepath.Join(base, candidates[len(candidates)-1]), nil
+    return target, nil
 }
 ```
 
@@ -372,13 +349,20 @@ The versioned directory scheme supports multiple installed versions:
 /opt/hoster/qemu/
 ├── 9.2.0_2025-11-01/
 ├── 10.2.2_2026-04-05/
-└── latest -> 10.2.2_2026-04-05/
+├── 11.1.0_2026-08-12/
+└── latest -> 11.1.0_2026-08-12/
 ```
 
 Rollback is as simple as:
 ```bash
 ln -sfn /opt/hoster/qemu/9.2.0_2025-11-01 /opt/hoster/qemu/latest
 ```
+
+The `/opt/hoster/qemu/bin/` launchers follow that switch, including when
+rolling back to packages whose own wrappers predate the symlink-path fix.
+Running VMs are unaffected; the selected binaries change for subsequent
+commands and VM starts. Test guest compatibility before changing versions and
+use an explicit versioned QEMU machine type for migration compatibility.
 
 Old versions can be removed with `rm -rf /opt/hoster/qemu/<old-version>/`.
 
@@ -391,9 +375,15 @@ cd QEMU
 ./export-installer.sh
 ```
 
-This runs a fully reproducible Docker-based build. The Dockerfile fetches all
-sources, compiles everything, bundles shared libraries, and emits a single
-`.run` file.
+This runs a containerized Docker build. The Dockerfile fetches all sources,
+compiles everything, bundles shared libraries, and emits a single `.run` file.
+
+The QEMU release tarball is checked against its pinned SHA-256 before it is
+extracted. Companion repositories are checked against pinned tag commits, and
+the payload includes upstream source licenses plus Debian copyright notices for
+the bundled system libraries. For release work, also verify the QEMU tarball's
+detached signature against the official QEMU signing key before updating the
+checksum pin.
 
 ## Notes
 

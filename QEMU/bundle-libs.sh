@@ -7,6 +7,7 @@ set -euo pipefail
 
 readonly PREFIX="${1:?Usage: bundle-libs.sh /opt/qemu}"
 readonly BUNDLE_DIR="${PREFIX}/lib/bundled"
+readonly LICENSE_DIR="${PREFIX}/licenses/system-libraries"
 SEARCH_DIRS=("${PREFIX}/bin" "${PREFIX}/libexec" "${PREFIX}/lib")
 
 iter_elf_files() {
@@ -25,14 +26,11 @@ is_glibc_or_system_lib() {
 	# kernel virtual DSO
 	linux-vdso.so*) return 0 ;;
 	# PAM, authentication, and audit — should never be bundled across distros.
-	*/libpam.so*|*/libpam_misc.so*|*/libaudit.so*|*/libcap.so*|\
-	*/libcap-ng.so*)
+	*/libpam.so*|*/libpam_misc.so*|*/libaudit.so*|*/libcap.so*)
 		return 0 ;;
 	# systemd, SELinux, and core security libraries.
 	*/libsystemd.so*|*/libselinux.so*|*/libsepol.so*|\
-	*/libgcrypt.so*|*/libgpg-error.so*|*/libkeyutils.so*|\
-	*/libkrb5.so*|*/libgssapi_krb5.so*|*/libk5crypto.so*|\
-	*/libcom_err.so*|*/libkrb5support.so*)
+	*/libgcrypt.so*|*/libgpg-error.so*)
 		return 0 ;;
 	# TLS/crypto — the target distro's own copies should be used.
 	*/libssl.so*|*/libcrypto.so*)
@@ -40,7 +38,7 @@ is_glibc_or_system_lib() {
 	# Compression and low-level utilities commonly present on Linux hosts.
 	# Keep libbz2 bundled: some target systems do not install it by default.
 	*/libz.so*|*/liblzma.so*|*/liblz4.so*|*/libzstd.so*|\
-	*/libpcre*.so*|*/libexpat.so*|\
+	*/libpcre*.so*|\
 	*/libblkid.so*|*/libmount.so*|*/libuuid.so*)
 		return 0 ;;
 	esac
@@ -67,6 +65,7 @@ if [[ ${#lib_paths[@]} -eq 0 ]]; then
 fi
 
 mkdir -p "${BUNDLE_DIR}"
+mkdir -p "${LICENSE_DIR}"
 for lib_path in "${!lib_paths[@]}"; do
 	real_path="$(readlink -f "${lib_path}")"
 	base_name="$(basename "${lib_path}")"
@@ -78,6 +77,16 @@ for lib_path in "${!lib_paths[@]}"; do
 	fi
 	if [[ "${base_name}" != "${real_name}" && ! -e "${BUNDLE_DIR}/${base_name}" ]]; then
 		ln -sf "${real_name}" "${BUNDLE_DIR}/${base_name}"
+	fi
+
+	# Preserve the distro copyright notice for every bundled system library.
+	package_name="$({
+		dpkg-query --search "${lib_path}" 2>/dev/null || \
+			dpkg-query --search "*/${real_name}" 2>/dev/null || true
+	} | sed -n '1s/:.*//p')"
+	if [[ -n "${package_name}" && -f "/usr/share/doc/${package_name}/copyright" ]]; then
+		cp "/usr/share/doc/${package_name}/copyright" \
+			"${LICENSE_DIR}/${package_name}.copyright"
 	fi
 done
 

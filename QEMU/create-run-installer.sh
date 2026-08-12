@@ -49,6 +49,10 @@ fi
 
 cp -a "${QEMU_PREFIX}/firmware" "${PAYLOAD_DIR}/firmware"
 
+if [[ -d "${QEMU_PREFIX}/licenses" ]]; then
+	cp -a "${QEMU_PREFIX}/licenses" "${PAYLOAD_DIR}/licenses"
+fi
+
 if [[ -d "${QEMU_PREFIX}/share" ]]; then
 	cp -a "${QEMU_PREFIX}/share" "${PAYLOAD_DIR}/share"
 fi
@@ -69,7 +73,8 @@ for binary in "${PAYLOAD_DIR}/libexec/"*; do
 
 	cat > "${PAYLOAD_DIR}/bin/${bin_name}" <<'WRAPPER'
 #!/usr/bin/env bash
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SELF_DIR="$(cd "$(dirname "${SELF_PATH}")" && pwd)"
 LIB_DIR="${SELF_DIR}/../lib/bundled"
 if [[ -d "${LIB_DIR}" ]]; then
 	export LD_LIBRARY_PATH="${LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -83,6 +88,14 @@ done
 # Embed version metadata
 cat > "${PAYLOAD_DIR}/build-info.txt" <<EOF
 QEMU_VERSION=${QEMU_RAW_VERSION}
+QEMU_SOURCE_SHA256=${QEMU_SHA256:-unknown}
+LIBTPMS_VERSION=${LIBTPMS_VERSION:-unknown}
+LIBTPMS_COMMIT=${LIBTPMS_COMMIT:-unknown}
+SWTPM_VERSION=${SWTPM_VERSION:-unknown}
+SWTPM_COMMIT=${SWTPM_COMMIT:-unknown}
+VIRTIOFSD_VERSION=${VIRTIOFSD_VERSION:-unknown}
+VIRTIOFSD_COMMIT=${VIRTIOFSD_COMMIT:-unknown}
+OVMF_PACKAGE_VERSION=$(dpkg-query -W -f='${Version}' ovmf 2>/dev/null || printf unknown)
 BUILD_DATE=${BUILD_DATE}
 INSTALL_DIR_NAME=${QEMU_RAW_VERSION}_${BUILD_DATE}
 EOF

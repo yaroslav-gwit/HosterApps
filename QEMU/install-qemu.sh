@@ -23,6 +23,19 @@ source "${PAYLOAD_DIR}/build-info.txt"
 
 readonly INSTALL_DIR="${HOSTER_QEMU_BASE}/${INSTALL_DIR_NAME}"
 
+# Validate the complete payload before replacing an installation produced by
+# another build on the same day.
+for dir in bin libexec firmware share/qemu lib/bundled licenses; do
+	[[ -d "${PAYLOAD_DIR}/${dir}" ]] || die "Missing payload directory: ${dir}"
+done
+for bin_name in qemu-system-x86_64 qemu-img qemu-nbd swtpm virtiofsd; do
+	[[ -x "${PAYLOAD_DIR}/bin/${bin_name}" ]] || die "Missing payload wrapper: ${bin_name}"
+	[[ -x "${PAYLOAD_DIR}/libexec/${bin_name}" ]] || die "Missing payload binary: ${bin_name}"
+done
+for fw_name in bios-256k.bin OVMF_CODE_4M.fd OVMF_CODE_4M.secboot.fd OVMF_VARS_4M.fd OVMF_VARS_4M.ms.fd; do
+	[[ -f "${PAYLOAD_DIR}/firmware/${fw_name}" ]] || die "Missing payload firmware: ${fw_name}"
+done
+
 if [[ -d "${INSTALL_DIR}" ]]; then
 	warn "Install directory already exists: ${INSTALL_DIR}"
 	warn "Overwriting existing installation"
@@ -33,7 +46,7 @@ note "Installing QEMU ${QEMU_VERSION} (built ${BUILD_DATE}) into ${INSTALL_DIR}"
 mkdir -p "${INSTALL_DIR}"
 
 # Copy all payload directories into the install target
-for dir in bin libexec firmware share lib; do
+for dir in bin libexec firmware share lib licenses; do
 	if [[ -d "${PAYLOAD_DIR}/${dir}" ]]; then
 		cp -a "${PAYLOAD_DIR}/${dir}" "${INSTALL_DIR}/${dir}"
 	fi
@@ -56,19 +69,31 @@ if [[ -f "/etc/ld.so.conf.d/hoster-qemu.conf" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Symlinks in /opt/hoster/qemu/bin/ that always point to the latest
+# Launchers in /opt/hoster/qemu/bin/ that always dispatch through the latest
 # installed version's wrapper scripts.
 # ---------------------------------------------------------------------------
 readonly SYMLINK_BIN="${HOSTER_QEMU_BASE}/bin"
 mkdir -p "${SYMLINK_BIN}"
+
+# Switch the complete versioned tree through one symlink. Convenience launchers
+# below deliberately execute through latest so rollback is atomic for binaries,
+# libraries, firmware, and data files. Launchers are used instead of direct
+# symlinks because wrappers shipped before 11.1.0 derived their library path
+# from $0 and therefore failed when invoked through a differently located
+# symlink.
+ln -sfn "${INSTALL_DIR}" "${HOSTER_QEMU_BASE}/latest"
+
 for wrapper in "${INSTALL_DIR}/bin/"*; do
 	[[ -f "${wrapper}" && -x "${wrapper}" ]] || continue
 	local_name="$(basename "${wrapper}")"
-	ln -sf "${wrapper}" "${SYMLINK_BIN}/${local_name}"
+	rm -f "${SYMLINK_BIN}/${local_name}"
+	cat > "${SYMLINK_BIN}/${local_name}" <<'WRAPPER'
+#!/usr/bin/env bash
+exec "/opt/hoster/qemu/latest/bin/__BIN_NAME__" "$@"
+WRAPPER
+	sed -i "s/__BIN_NAME__/${local_name}/" "${SYMLINK_BIN}/${local_name}"
+	chmod 0755 "${SYMLINK_BIN}/${local_name}"
 done
-
-# Also symlink the "latest" directory for convenience
-ln -sfn "${INSTALL_DIR}" "${HOSTER_QEMU_BASE}/latest"
 
 # ---------------------------------------------------------------------------
 # Verify key binaries
@@ -101,10 +126,11 @@ note "  ${INSTALL_DIR}/libexec/          — real QEMU, swtpm, virtiofsd binarie
 note "  ${INSTALL_DIR}/firmware/         — OVMF and SeaBIOS firmware files"
 note "  ${INSTALL_DIR}/share/qemu/       — QEMU data files (keymaps, device ROMs)"
 note "  ${INSTALL_DIR}/lib/bundled/      — bundled shared libraries (private to QEMU)"
+note "  ${INSTALL_DIR}/licenses/         — source and bundled-library license notices"
 note ""
-note "Convenience symlinks:"
+note "Convenience paths:"
 note "  ${HOSTER_QEMU_BASE}/latest/      — always points to the most recent install"
-note "  ${HOSTER_QEMU_BASE}/bin/         — symlinks to latest version's binaries"
+note "  ${HOSTER_QEMU_BASE}/bin/         — launchers for latest version's binaries"
 note ""
 note "To use with Hoster, update the binary/firmware lookup paths to:"
 note "  Binary:   ${INSTALL_DIR}/bin/qemu-system-x86_64"
