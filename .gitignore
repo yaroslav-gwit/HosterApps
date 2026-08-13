@@ -1,6 +1,7 @@
 SaunaFS/dist
 QEMU/dist
 Caddy/dist
+Scaphandre/dist
 CloudHypervisor/dist
 WebOS/dist/*
 !WebOS/dist/.gitkeep

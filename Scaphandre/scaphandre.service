@@ -3,18 +3,19 @@ Description=Scaphandre Prometheus power metrics exporter
 Documentation=https://hubblo-org.github.io/scaphandre-documentation/
 After=network-online.target
 Wants=network-online.target
-# StartLimitInterval must be > StartLimitBurst * RestartSec
-StartLimitInterval=60
+# StartLimitIntervalSec must be greater than StartLimitBurst * RestartSec.
+StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
-# Scaphandre requires root to read RAPL power data from /sys/class/powercap/
+# Scaphandre requires root to read RAPL data from /sys/class/powercap and
+# process data from /proc.
+Type=simple
 User=root
 Group=root
-Type=simple
 SyslogIdentifier=scaphandre
 
-ExecStart=/usr/bin/scaphandre prometheus \
+ExecStart=/opt/hoster/scaphandre/bin/scaphandre prometheus \
     --qemu \
     --containers \
     --port 1920 \
@@ -25,17 +26,16 @@ RestartSec=5
 TimeoutStartSec=30
 TimeoutStopSec=15
 
-# Security hardening (limited by root requirement, but still useful)
+# Security hardening (limited by the exporter requiring root).
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectKernelModules=yes
-RestrictAddressFamilies=AF_INET AF_INET6
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictRealtime=yes
 LockPersonality=yes
 SystemCallArchitectures=native
 
-# Process limits
 LimitNOFILE=65535
 
 [Install]
