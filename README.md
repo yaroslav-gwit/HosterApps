@@ -1,3 +1,5 @@
+
+
 # 🚀 Hoster Jail Scripts
 
 Welcome to your new (and favorite) Jail deployment automation repository, that will make installing your favorite software projects on FreeBSD Jails a breeze!
@@ -13,7 +15,7 @@ To install your favorite software, follow these simple steps:
 
 - Look for the folder named after the software project you want to deploy (e.g., WordPress, Laravel, Sonarr, etc).
 - Follow the instructions in a `README.md` file for that particular script. It will help you prepare your Jail prior to the deployment itself (e.g. install a Go compiler, make sure Python PIP is available, install NodeJS, etc).
-- Run the script described in the `README.md` and enjoy the automated installation process.
+- Run the script described in the `README.md` (many scripts need to run as `root`) and enjoy the automated installation process.
 
 It's that easy! We take care of the heavy lifting, letting you focus on enjoying your software without the hassle of manual installations.
 
